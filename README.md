@@ -10,7 +10,7 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 2. 在星栈的轻应用列表中打开 **U远程**。如果所用版本已包含此插件，无需重复安装。
 3. 在插件的“账号与设置”中完成登录，再从“我的设备”发起远程连接，或在“本机被控”中管理共享与控制权限。
 
-如果所用星栈版本未包含插件，可按下方开发说明构建，将模块完整输出放入星栈的 `Apps/URemote/` 目录，然后重新启动星栈。
+插件下载：前往 [U远程 Releases](https://github.com/hdward-dev/uremote/releases/latest)，下载 `AsterDock-App-u-remote.appbundle`，通过星栈的应用包安装入口导入。请勿同时保留同一插件的旧目录副本。源码开发者也可按下方说明构建模块。
 
 ## 功能与运行条件
 
@@ -34,6 +34,8 @@ dotnet restore URemote.slnx
 dotnet build URemote.slnx -c Release --no-restore -m:1
 dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
 ```
+
+可执行 `python3 scripts/package.py` 生成 `.appbundle` 和 SHA-256 校验文件，输出位于 `artifacts/release/`。
 
 构建后，将 `src/URemote.Module/bin/Release/net10.0/` 的完整内容放入星栈的 `Apps/URemote/` 目录，保留插件清单、依赖和第三方声明。运行界面需要星栈宿主；仓库中的 CLI 仅用于开发诊断。
 
