@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/URemote.Media/URemote.Media.csproj" /></ItemGroup>
+<ItemGroup><ProjectReference Include="../../src/URemote.Linux/URemote.Linux.csproj"/><Compile Include="../../src/URemote.Host/HostClipboard.cs" Link="HostClipboard.cs"/></ItemGroup><ItemGroup><Compile Include="../../src/URemote.Host/HostTerminalPeer.cs" Link="HostTerminalPeer.cs"/><Compile Include="../../src/URemote.Host/HostTerminalManager.cs" Link="HostTerminalManager.cs"/></ItemGroup><ItemGroup><Compile Include="../../src/URemote.Host/DesktopControllerSession.cs" Link="DesktopControllerSession.cs"/></ItemGroup><ItemGroup><Compile Include="../../src/URemote.Host/HostFileTransfer.cs" Link="HostFileTransfer.cs"/></ItemGroup></Project>

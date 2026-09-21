@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/URemote.Core/URemote.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/URemote.Linux/URemote.Linux.csproj" /></ItemGroup>
+</Project>

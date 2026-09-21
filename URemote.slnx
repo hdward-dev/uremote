@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="src/AsterDock.Contracts/AsterDock.Contracts.csproj" />
+  <Project Path="src/URemote.Core/URemote.Core.csproj" />
+  <Project Path="src/URemote.Host/URemote.Host.csproj" />
+  <Project Path="src/URemote.Linux/URemote.Linux.csproj" />
+  <Project Path="src/URemote.Media/URemote.Media.csproj" />
+  <Project Path="src/URemote.Module/URemote.Module.csproj" />
+  <Project Path="tests/URemote.Checks/URemote.Checks.csproj" />
+  <Project Path="tests/URemote.Media.Tests/URemote.Media.Tests.csproj" />
+  <Project Path="tests/URemote.ProtocolChecks/URemote.Tests.csproj" />
+</Solution>

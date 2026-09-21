@@ -1,0 +1,49 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+TestResults/
+artifacts/
+
+# Test and coverage output
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+coverage.*
+
+# Local runtime data and logs
+AppData/
+*.log
+*.tmp
+*.bak
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Package and publish output
+publish/
+*.nupkg
+*.snupkg
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Private remote identities and runtime captures
+identity*.json
+settings.json
+*.lock
+.wallpaper.json
+captures/
