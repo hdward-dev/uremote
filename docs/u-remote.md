@@ -1,4 +1,6 @@
-# U远程原生轻应用
+# U远程 · 星栈远程控制插件
+
+请先安装并启动 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock)，再从轻应用列表打开 U远程。本仓库提供插件，不提供独立桌面启动器。
 
 U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动网页或 GTK 窗口。
 模块入口为 `URemote.Module.URemoteApplicationModule`，清单 ID 为 `u-remote`。
