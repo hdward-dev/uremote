@@ -33,6 +33,7 @@ public sealed partial class URemoteView
     private readonly List<Button> navigation = [];
     private string? selectedDeviceId;
     private readonly Dictionary<string, RemoteDesktopWindow> remoteWindows = [];
+    private readonly Dictionary<string, RemoteToolsWindow> toolWindows = [];
     private Control[] pages = [];
     private IReadOnlyList<UuDevice> devices = [];
     private HashSet<string> favorites = [];
@@ -276,6 +277,7 @@ public sealed partial class URemoteView
     }
     private void OpenRemote(UuDevice device)
     {
+        if (toolWindows.ContainsKey(device.Id)) { catalogHint.Text = "请先关闭此设备的终端或文件窗口，再发起桌面连接。"; return; }
         if (remoteWindows.TryGetValue(device.Id, out var existing)) { existing.Activate(); return; }
         if (device.IsCurrent || !device.Online || !device.Controllable || !device.ControlledSupport) return;
         try
@@ -284,10 +286,25 @@ public sealed partial class URemoteView
             if (!state.IsAuthenticated || !File.Exists(encoder.Text)) throw new InvalidOperationException();
             var window = new RemoteDesktopWindow(device, state, encoder.Text!);
             remoteWindows.Add(device.Id, window);
-            window.Closed += (_, _) => remoteWindows.Remove(device.Id);
+            window.Closed += async (_, _) => { try { await window.Completion; } finally { remoteWindows.Remove(device.Id); } };
             window.Show();
         }
         catch { catalogHint.Text = "无法打开远控窗口，请检查登录状态与视频解码器路径。"; }
+    }
+    private void OpenTool(UuDevice device, bool terminal)
+    {
+        if (remoteWindows.ContainsKey(device.Id)) { catalogHint.Text = "请先断开此设备的桌面，再打开终端或文件传输。"; return; }
+        if (toolWindows.TryGetValue(device.Id, out var existing)) { existing.Activate(); catalogHint.Text = "请先关闭该设备已有的工具窗口，再切换连接类型。"; return; }
+        if (device.IsCurrent || !device.Online || !device.Controllable || !device.ControlledSupport) return;
+        try
+        {
+            var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
+            if (!state.IsAuthenticated) throw new InvalidOperationException();
+            var window = new RemoteToolsWindow(device, state, terminal); toolWindows.Add(device.Id, window);
+            window.Closed += async (_, _) => { try { await window.Completion; } finally { toolWindows.Remove(device.Id); } };
+            window.Show();
+        }
+        catch { catalogHint.Text = "无法打开工具窗口，请检查登录状态。"; }
     }
     private void SaveFavorites()
     {

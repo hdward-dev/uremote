@@ -21,7 +21,7 @@ public sealed class ControllerMediaPeer : IDisposable
     public event Action<int, byte[]>? Video;
     public event Action? ControlReady;
     public bool CanControl => control?.readyState == RTCDataChannelState.open && disposed == 0;
-    public ControllerMediaPeer(List<RTCIceServer>? servers = null, bool relay = false)
+    public ControllerMediaPeer(List<RTCIceServer>? servers = null, bool relay = false, bool dataOnly = false)
     {
         peer = new RTCPeerConnection(new RTCConfiguration { iceServers = servers ?? [], X_UseRtpFeedbackProfile = true,
             iceTransportPolicy = relay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all });
@@ -29,9 +29,12 @@ public sealed class ControllerMediaPeer : IDisposable
         peer.onicegatheringstatechange += s => { if (s == RTCIceGatheringState.complete) gathered.TrySetResult(); };
         peer.onconnectionstatechange += s => Status?.Invoke("peer-" + s);
         peer.OnVideoFrameReceivedByIndex += (index, endpoint, stamp, bytes, format) => { if (bytes.Length <= 16_000_000 && disposed == 0) Video?.Invoke(index, bytes); };
+        if (!dataOnly)
+        {
         for (int i = 0; i < 5; i++) peer.addTrack(new MediaStreamTrack(new List<VideoFormat> {
             new(VideoCodecsEnum.H264, 98, 90000, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e033") }, MediaStreamStatusEnum.RecvOnly));
         peer.addTrack(new MediaStreamTrack(new List<AudioFormat> { new(AudioCodecsEnum.OPUS, 111, 48000, 2) }, MediaStreamStatusEnum.Inactive));
+        }
         peer.ondatachannel += Attach;
     }
     private ulong Next() => (ulong)Interlocked.Increment(ref sequence);
@@ -48,6 +51,7 @@ public sealed class ControllerMediaPeer : IDisposable
             try { if (HostControlEcho.Reply(bytes, Next(), (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), true) is { } reply) Send(reply); }
             catch (FormatException) { }
         };
+        channel.onopen += () => Status?.Invoke("data-ready-" + channel.label);
         if (channel.label == "CONTROL_DATA_CHANNEL") channel.onopen += () => { ControlReady?.Invoke(); _ = HeartbeatAsync(); };
     }
     private async Task HeartbeatAsync()
@@ -80,7 +84,11 @@ public sealed class ControllerMediaPeer : IDisposable
     {
         lock (sendGate) {
             if (disposed != 0 || bytes.Length > 131072 || !channels.TryGetValue(label, out var channel) || channel.readyState != RTCDataChannelState.open) return false;
-            try { channel.send(bytes); return true; } catch { return false; }
+            try {
+                if (label == "TEXT_DATA_CHANNEL") peer.sctp.RTCSctpAssociation.SendData(channel.id.GetValueOrDefault(), (uint)DataChannelPayloadProtocols.WebRTC_String, bytes);
+                else channel.send(bytes);
+                return true;
+            } catch { return false; }
         }
     }
     public bool SendInput(string json, int display)

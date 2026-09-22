@@ -48,7 +48,7 @@ public sealed class DesktopControllerSession
                 var urls = o["urls"] is JsonArray list ? list.Select(x => x!.GetValue<string>()) : [o["urls"]!.GetValue<string>()];
                 foreach (var url in urls) servers.Add(new RTCIceServer { urls = url, username = o["username"]?.GetValue<string>(), credential = o["credential"]?.GetValue<string>() });
             }
-            using var media = new ControllerMediaPeer(servers, result["force_relay"]?.GetValue<bool>() ?? false); peer = media;
+            using var media = new ControllerMediaPeer(servers, result["force_relay"]?.GetValue<bool>() ?? false, captureType != 1); peer = media;
             media.DataReceived += (channel, bytes) => DataReceived?.Invoke(channel, bytes);
             var candidateQueue = Channel.CreateBounded<JsonObject>(128);
             media.LocalCandidate += c => { if (!candidateQueue.Writer.TryWrite(c)) done.TrySetException(new IOException("Too many candidates.")); };

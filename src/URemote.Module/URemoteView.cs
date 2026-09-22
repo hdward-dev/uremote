@@ -260,6 +260,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     {
         if (disposed) return;
         foreach (var window in remoteWindows.Values.ToArray()) window.Close();
+        foreach (var window in toolWindows.Values.ToArray()) window.Close();
         disposed = true; termination?.Dispose(); lifetime.Cancel(); sessionStop?.Cancel();
         // Cleanup does not depend on the UI dispatcher, so the host can safely unload afterwards.
         try { session?.GetAwaiter().GetResult(); } catch { }

@@ -5,6 +5,8 @@ using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 using URemote.Media;
 
+if(args.Contains("--controller-files-only")) { await ControllerFileChecks.RunAsync(); return; }
+
 if(args.Contains("--assistance-probe")) {
     var state=System.Text.Json.JsonSerializer.Deserialize<URemote.Core.LoginState>(JsonNode.Parse(File.ReadAllText(Environment.GetEnvironmentVariable("UREMOTE_IDENTITY")!))!["State"]!.ToJsonString())!;
     var method=typeof(URemote.Core.UuMacHostProtocol).GetMethod("BuildRequest",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
