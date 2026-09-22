@@ -4,6 +4,23 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 
 **本项目是插件，需要在星栈中使用，不提供独立桌面应用。** 此仓库用于维护插件源码；首次使用请先前往星栈项目。
 
+## 界面预览
+
+新版采用左侧导航、设备桌面预览卡片和右侧本机被控／远程协助面板，支持网格与列表切换、搜索、收藏及深浅主题。
+
+![U远程新版界面](docs/assets/uremote-ui.png)
+
+上图为已实现界面的验证窗口截图。设备预览读取上传的桌面壁纸，并非实时视频；缺少图片时显示占位提示。截图中的被控开关为验证窗口状态，不代表当前设备服务状态。
+
+<details>
+<summary>查看 UI 设计参考图</summary>
+
+![U远程 UI 设计参考](docs/assets/uremote-ui-design.png)
+
+设计图中的设备、壁纸和协助码为示例，实际功能及显示以插件为准。
+
+</details>
+
 ## 开始使用
 
 1. 前往 [星栈项目首页](https://github.com/hdward-dev/asterdock)，按其说明安装并启动星栈。发布版本可在 [星栈 Releases](https://github.com/hdward-dev/asterdock/releases) 查看。
@@ -14,7 +31,7 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 
 ## 功能与运行条件
 
-- 设备列表、搜索与收藏，远程桌面在独立视窗中打开。
+- 设备壁纸预览、网格／列表切换、搜索与收藏，远程桌面在独立视窗中打开。
 - Linux / Wayland 本机被控，包含多屏、键鼠、远程终端及文件传入/取出。
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
 - 显示器变化及部分网络、采集故障自动重试。

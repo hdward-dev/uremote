@@ -23,8 +23,11 @@ public sealed partial class URemoteView
     private readonly TextBox search = new() { PlaceholderText = "搜索设备名称、平台或编号", MinWidth = 160 };
     private readonly ComboBox filter = new() { ItemsSource = new[] { "全部设备", "在线设备", "我的收藏", "电脑", "移动设备" }, SelectedIndex = 0, Width = 130 };
     private readonly Button refresh = new() { Content = "刷新设备" };
-    private readonly StackPanel deviceRows = new() { Spacing = 10 };
-    private readonly StackPanel deviceDetail = new() { Spacing = 10 };
+    private readonly Grid deviceRows = new() { ColumnSpacing = 16, RowSpacing = 16 };
+    private int deviceColumns = 2;
+    private bool listView;
+    private int deviceTab;
+    private readonly StackPanel deviceDetail = new() { Spacing = 10, IsVisible = false };
     private readonly ContentControl page = new();
     private readonly StackPanel advancedSettings = new() { Spacing = 12 };
     private readonly List<Button> navigation = [];
@@ -56,6 +59,12 @@ public sealed partial class URemoteView
     };
     private void BuildInterface(string dataDirectory)
     {
+        Resources.ThemeDictionaries[ThemeVariant.Light] = new ResourceDictionary {
+            ["AppAccentBrush"] = new SolidColorBrush(Color.Parse("#008D82")),
+            ["AppAccentSurfaceBrush"] = new SolidColorBrush(Color.Parse("#E1F2EF")) };
+        Resources.ThemeDictionaries[ThemeVariant.Dark] = new ResourceDictionary {
+            ["AppAccentBrush"] = new SolidColorBrush(Color.Parse("#43CEB9")),
+            ["AppAccentSurfaceBrush"] = new SolidColorBrush(Color.Parse("#173F3A")) };
         FontFamily = new FontFamily(OperatingSystem.IsLinux() ? "Noto Sans CJK SC" : "Segoe UI");
         Styles.Add(new Style(x => x.OfType<TextBlock>()) { Setters = { new Setter(TextBlock.FontFamilyProperty, FontFamily) } });
         favoriteFile = Path.Combine(dataDirectory, "device-favorites.json");
@@ -66,25 +75,35 @@ public sealed partial class URemoteView
         ApplyTheme(detail, TextBlock.ForegroundProperty, "AppMutedBrush"); detail.FontSize = 13;
         ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush"); metrics.FontSize = 12; metrics.Text = "双屏桌面 · 远程终端";
         ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush");
-        var brand = new StackPanel { Spacing = 3, Children = { Text("U远程", 26), Text("AsterDock · 远程工作空间", 12, true) } };
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 0, 0, 4) };
-        header.Children.Add(brand); Grid.SetColumn(hostBadge, 1); header.Children.Add(hostBadge); hostBadge.VerticalAlignment = VerticalAlignment.Center;
-        var heroContent = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 18 };
-        heroContent.Children.Add(new StackPanel { Spacing = 10, Children = { Text("本机被控", 12, true), Text(LinuxDeviceProfile.DeviceName, 18), status, detail, metrics } });
-        var hostActions = new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Center, Children = { Text("允许被控", 13, true), hostSwitch } };
-        Grid.SetColumn(hostActions, 1); heroContent.Children.Add(hostActions);
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        foreach (var title in new[] { "我的设备", "本机被控", "账号与设置" })
+        var brand = new StackPanel { Spacing = 5, Margin = new Thickness(14, 12, 0, 30), Children = { Text("U远程", 25), Text("远程工作空间", 12, true) } };
+        var tabs = new StackPanel { Spacing = 8 };
+        foreach (var item in new[] { ("我的设备", "▤", 0), ("本机被控", "▣", 1), ("账号与设置", "⚙", 2), ("远程协助", "♧", 3), ("文件传输", "⇄", 4) })
         {
-            var index = navigation.Count; var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { Text(new[] { "▤", "▣", "⚙" }[index], 17), Text(title, 14) } };
-            var button = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(16, 13), CornerRadius = new CornerRadius(9) };
-            button.Click += (_, _) => ShowPage(index); navigation.Add(button); tabs.Children.Add(button);
+            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { Text(item.Item2, 18), Text(item.Item1, 14) } };
+            var button = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 13), CornerRadius = new CornerRadius(9) };
+            button.Click += (_, _) => ShowPage(item.Item3); navigation.Add(button);
         }
-        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = 10 };
+        foreach (var i in new[] { 0, 1, 3, 4 }) tabs.Children.Add(navigation[i]);
+        var sidebar = new DockPanel { Margin = new Thickness(12) };
+        DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
+        DockPanel.SetDock(navigation[2], Dock.Bottom); sidebar.Children.Add(navigation[2]); sidebar.Children.Add(tabs);
+        var toolbar = new Grid { ColumnDefinitions = new("*,Auto,Auto,Auto"), ColumnSpacing = 8 };
+        search.PlaceholderText = "搜索设备名称"; filter.Width = 112; refresh.Content = "刷新";
         toolbar.Children.Add(search); Grid.SetColumn(filter, 1); toolbar.Children.Add(filter); Grid.SetColumn(refresh, 2); toolbar.Children.Add(refresh);
-        ApplyTheme(catalogCount, TextBlock.ForegroundProperty, "AppStrongTextBrush"); ApplyTheme(catalogHint, TextBlock.ForegroundProperty, "AppMutedBrush"); catalogHint.FontSize = 12;
-        var devicePage = new StackPanel { Spacing = 18, Children = { catalogCount, Text("管理同一 UU 账号下的电脑与移动设备", 13, true), toolbar, catalogHint, deviceDetail, deviceRows,
-            Text("在线且允许被控的电脑可在独立窗口中连接。关闭远控窗口只断开对应设备。", 12, true) } };
+        var viewMode = new Button { Content = "列表", MinWidth = 50 };
+        viewMode.Click += (_, _) => { listView = !listView; viewMode.Content = listView ? "网格" : "列表"; RenderDevices(); };
+        Grid.SetColumn(viewMode, 3); toolbar.Children.Add(viewMode);
+        ApplyTheme(catalogCount, TextBlock.ForegroundProperty, "AppStrongTextBrush"); catalogCount.FontSize = 28;
+        ApplyTheme(catalogHint, TextBlock.ForegroundProperty, "AppMutedBrush"); catalogHint.FontSize = 12;
+        var deviceTabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var (title, index) in new[] { ("全部设备", 0), ("收藏", 1) })
+        {
+            var button = new Button { Content = title, Padding = new Thickness(16, 8), CornerRadius = new CornerRadius(18) };
+            button.Click += (_, _) => { deviceTab = index; foreach (var child in deviceTabs.Children.OfType<Button>()) ApplyTheme(child, Button.BackgroundProperty, child == button ? "AppAccentSurfaceBrush" : "AppSurfaceBrush"); RenderDevices(); };
+            ApplyTheme(button, Button.BackgroundProperty, index == 0 ? "AppAccentSurfaceBrush" : "AppSurfaceBrush"); deviceTabs.Children.Add(button);
+        }
+        var devicePage = new StackPanel { Spacing = 16, Children = { catalogCount, catalogHint, toolbar, deviceTabs, deviceDetail, deviceRows,
+            Text("预览为设备上传的桌面壁纸，非实时画面。远程控制将在独立窗口中打开。", 12, true) } };
         search.TextChanged += (_, _) => RenderDevices(); filter.SelectionChanged += (_, _) => RenderDevices();
         refresh.Click += async (_, _) => await RefreshDevicesAsync();
         duration.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -93,7 +112,7 @@ public sealed partial class URemoteView
         settings.Children.Add(input); settings.Children.Add(audio); settings.Children.Add(clipboard);
         settings.Children.Add(Text("保持被控的时长", 13, true)); settings.Children.Add(duration);
         var hostPage = new StackPanel { Spacing = 16, Children = {
-            Text("本机被控", 22), Text($"在其他设备的 UU 官方客户端中，选择「{LinuxDeviceProfile.DeviceName}」连接。", 13, true), BuildAssistanceCard(), Card(settings), BuildFileTransferCard(),
+            Text("本机被控", 22), Text($"在其他设备的 UU 官方客户端中，选择「{LinuxDeviceProfile.DeviceName}」连接。", 13, true), Card(settings),
             Card(new StackPanel { Spacing = 9, Children = {
                 Text("连接与退出", 16), Text("主控退出后，本机继续等待连接。终端会话会保留，方便再次进入。", 13, true),
                 Text("本机关闭被控开关，或退出 AsterDock，将结束共享与终端会话。修改共享权限前，请先关闭被控开关。", 13, true) } }) } };
@@ -108,36 +127,44 @@ public sealed partial class URemoteView
             Card(new Expander { Header = "高级设置", HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = advancedSettings }),
             Card(new StackPanel { Spacing = 8, Children = { Text("功能状态", 16), Text("已实测：双屏桌面、键鼠控制、退出后重连、远程终端命令执行。", 13, true),
                 Text("待验证：双向文本剪贴板、系统声音和画质切换效果。", 13, true) } }) } };
-        pages = [devicePage, hostPage, accountPage];
-        var body = new Grid { Margin = new Thickness(24), ColumnSpacing = 28, RowSpacing = 20 };
-        var hero = Card(heroContent, 18);
-        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = page };
-        body.Children.Add(header); body.Children.Add(hero); body.Children.Add(tabs); body.Children.Add(scroll);
+        var assistancePage = new StackPanel { Spacing = 16, Children = { Text("远程协助", 26), Text("本机协助码与权限开关位于右侧。将协助码和验证码交给对方即可发起协助。", 14, true) } };
+        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }];
+        var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 8) };
+        hostActions.Children.Add(Text("允许本机被控", 14)); Grid.SetColumn(hostSwitch, 1); hostActions.Children.Add(hostSwitch);
+        hostSwitch.MinWidth = 0;
+        var screenLink = new Button { Content = "显示器与共享设置", HorizontalAlignment = HorizontalAlignment.Stretch };
+        screenLink.Click += (_, _) => ShowPage(1);
+        var right = new StackPanel { Spacing = 18, Children = { Text("本机被控", 20), Text(LinuxDeviceProfile.DeviceName, 17), hostBadge, hostActions,
+            localScreens, status, detail, metrics, screenLink, new Separator(), Text("远程协助", 20), BuildAssistanceCard() } };
+        status.FontSize = 14; detail.FontSize = 12;
+        var body = new Grid { ColumnDefinitions = new("190,*,300"), RowDefinitions = new("*,Auto") };
+        var leftBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) };
+        ApplyTheme(leftBorder, Border.BorderBrushProperty, "AppBorderBrush");
+        var scroll = new ScrollViewer { Margin = new Thickness(24), HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = page };
+        var rightBorder = new Border { Padding = new Thickness(20), BorderThickness = new Thickness(1, 0, 0, 0), Child = new ScrollViewer { Content = right, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
+        ApplyTheme(rightBorder, Border.BorderBrushProperty, "AppBorderBrush"); ApplyTheme(rightBorder, Border.BackgroundProperty, "AppSurfaceBrush");
+        body.Children.Add(leftBorder); Grid.SetColumn(scroll, 1); body.Children.Add(scroll); Grid.SetColumn(rightBorder, 2); body.Children.Add(rightBorder);
+        var footer = new Border { Padding = new Thickness(18, 8), BorderThickness = new Thickness(0, 1, 0, 0), Child = Text("U远程 · 星栈远程控制插件", 11, true) };
+        ApplyTheme(footer, Border.BorderBrushProperty, "AppBorderBrush"); Grid.SetRow(footer, 1); Grid.SetColumnSpan(footer, 3); body.Children.Add(footer);
         Content = body;
-        bool? previousWide = null;
-        void ArrangeWorkspace(double width)
+        SizeChanged += (_, e) =>
         {
-            var wide = width >= 1000;
-            if (previousWide == wide) return;
-            previousWide = wide;
-            body.ColumnDefinitions = new ColumnDefinitions(wide ? "270,*" : "*");
-            body.RowDefinitions = new RowDefinitions(wide ? "Auto,Auto,*" : "Auto,Auto,Auto,*");
-            foreach (var child in body.Children) { Grid.SetColumn(child, 0); Grid.SetRowSpan(child, 1); }
-            Grid.SetRow(header, 0); Grid.SetRow(tabs, wide ? 1 : 2); Grid.SetRow(hero, wide ? 2 : 1);
-            hero.VerticalAlignment = VerticalAlignment.Top;
-            Grid.SetColumn(scroll, wide ? 1 : 0); Grid.SetRow(scroll, wide ? 0 : 3); Grid.SetRowSpan(scroll, wide ? 3 : 1);
-            tabs.Orientation = wide ? Orientation.Vertical : Orientation.Horizontal;
-            header.ColumnDefinitions = new ColumnDefinitions(wide ? "*" : "*,Auto");
-            header.RowDefinitions = new RowDefinitions(wide ? "Auto,Auto" : "Auto");
-            Grid.SetColumn(hostBadge, wide ? 0 : 1); Grid.SetRow(hostBadge, wide ? 1 : 0);
-            hostBadge.Margin = new Thickness(0, wide ? 14 : 0, 0, 0);
-            heroContent.ColumnDefinitions = new ColumnDefinitions(wide ? "*" : "*,Auto");
-            Grid.SetColumn(hostActions, wide ? 0 : 1); Grid.SetRow(hostActions, wide ? 1 : 0);
-            hostActions.Orientation = wide ? Orientation.Horizontal : Orientation.Vertical;
-
-        }
-        SizeChanged += (_, e) => ArrangeWorkspace(e.NewSize.Width);
-        ArrangeWorkspace(Bounds.Width);
+            var wide = e.NewSize.Width >= 1150;
+            body.ColumnDefinitions = new(wide ? "190,*,300" : "150,*,270");
+            scroll.Margin = new Thickness(wide ? 24 : 14);
+            if (e.NewSize.Width < 850)
+            {
+                body.ColumnDefinitions = new("130,*,0"); rightBorder.IsVisible = false;
+                if (!hostPage.Children.Contains(right)) { if (rightBorder.Child is ScrollViewer rs) rs.Content = null; rightBorder.Child = null; hostPage.Children.Insert(2, right); }
+            }
+            else
+            {
+                if (hostPage.Children.Contains(right)) { hostPage.Children.Remove(right); rightBorder.Child = new ScrollViewer { Content = right, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; }
+                rightBorder.IsVisible = true;
+            }
+            var columns = e.NewSize.Width >= 1150 ? 2 : 1;
+            if (columns != deviceColumns) { deviceColumns = columns; RenderDevices(); }
+        };
         ShowPage(0); RenderDevices();
         try { accountState.Text = DesktopHostSession.ReadIdentity(identity.Text ?? "").State.IsAuthenticated ? "已登录 · 与 UU 账号同步" : "尚未登录"; }
         catch { accountState.Text = "尚未登录"; }
@@ -188,6 +215,7 @@ public sealed partial class URemoteView
     private void ShowPage(int index)
     {
         if (pages.Length == 0) return;
+        if (index == 3 && Bounds.Width < 850) index = 1;
         page.Content = pages[index];
         for (var i = 0; i < navigation.Count; i++)
         {
@@ -211,23 +239,24 @@ public sealed partial class URemoteView
             devices = loaded; Console.WriteLine("device-catalog-loaded;count=" + devices.Count); accountState.Text = "已登录 · 与 UU 账号同步";
             catalogHint.Text = $"{devices.Count} 台设备 · {devices.Count(x => x.Online)} 台在线 · 更新于 {DateTime.Now:HH:mm:ss}";
             if (selectedDeviceId is { } selected && devices.FirstOrDefault(x => x.Id == selected) is { } updated) ShowDevice(updated);
-            else { selectedDeviceId = null; deviceDetail.Children.Clear(); }
+            else { selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false; }
             RenderDevices();
-            await RefreshAssistanceAsync();
+            await Task.WhenAll(RefreshPreviewsAsync(), RefreshAssistanceAsync());
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch
         {
             if (!disposed) catalogHint.Text = devices.Count > 0 ? "刷新失败，保留上次设备列表。请检查网络后重试。" : "暂时无法获取设备，请在“账号与设置”检查登录状态，或点击刷新重试。";
         }
-        finally { refreshing = false; if (!disposed) { refresh.IsEnabled = true; refresh.Content = "刷新设备"; } }
+        finally { refreshing = false; if (!disposed) { refresh.IsEnabled = true; refresh.Content = "刷新"; } }
     }
     private void RenderDevices()
     {
         deviceRows.Children.Clear();
+        deviceRows.ColumnDefinitions = new("*"); deviceRows.RowDefinitions = new("Auto");
         var query = search.Text?.Trim() ?? "";
         var matches = devices.Where(d => (query.Length == 0 || (d.Name + " " + d.PlatformName + " " + d.Id).Contains(query, StringComparison.OrdinalIgnoreCase))
-            && (filter.SelectedIndex switch { 1 => d.Online, 2 => favorites.Contains(d.Id), 3 => d.Category == "desktop", 4 => d.Category == "mobile", _ => true }))
+            && (deviceTab == 0 || favorites.Contains(d.Id)) && (filter.SelectedIndex switch { 1 => d.Online, 2 => favorites.Contains(d.Id), 3 => d.Category == "desktop", 4 => d.Category == "mobile", _ => true }))
             .OrderByDescending(d => d.IsCurrent).ThenByDescending(d => d.Online).ThenBy(d => d.Name, StringComparer.CurrentCulture).ToArray();
         catalogCount.Text = devices.Count > 0 ? $"我的设备  {matches.Length}" : "我的设备";
         if (matches.Length == 0)
@@ -236,37 +265,13 @@ public sealed partial class URemoteView
                 Text(devices.Count == 0 ? "还没有加载设备" : "没有符合条件的设备", 18),
                 Text(devices.Count == 0 ? "登录后点击刷新，即可查看同一 UU 账号下的电脑和移动设备。" : "试试其他关键词，或将筛选切换为“全部设备”。", 13, true) } })); return;
         }
-        foreach (var d in matches)
+        var columns = listView ? 1 : deviceColumns;
+        deviceRows.ColumnDefinitions = new ColumnDefinitions(columns == 2 ? "*,*" : "*");
+        deviceRows.RowDefinitions = new RowDefinitions(string.Join(",", Enumerable.Repeat("Auto", (matches.Length + columns - 1) / columns)));
+        for (var i = 0; i < matches.Length; i++)
         {
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("48,*,Auto,Auto,Auto,Auto"), ColumnSpacing = 12 };
-            var icon = DeviceIcon(d.Category == "mobile"); ApplyTheme(icon, PathIcon.ForegroundProperty, "AppAccentBrush");
-            var iconBox = new Border { Child = icon, CornerRadius = new CornerRadius(10), Width = 44, Height = 44 };
-            ApplyTheme(iconBox, Border.BackgroundProperty, "AppAccentSurfaceBrush"); row.Children.Add(iconBox);
-            var name = Text(d.Name + (d.IsCurrent ? " · 本机" : ""), 15); name.FontWeight = FontWeight.SemiBold; name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis;
-            var info = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center, Children = { name, Text(d.PlatformName + (d.Online && d.ControlledSupport && d.Controllable ? "  ·  允许被控" : ""), 12, true) } };
-            Grid.SetColumn(info, 1); row.Children.Add(info);
-            var availability = Text(d.StatusName, 12);
-            ApplyTheme(availability, TextBlock.ForegroundProperty, d.Online ? "AppPositiveBrush" : "AppMutedBrush");
-            var badge = new Border { Child = availability, Padding = new Thickness(10, 5), CornerRadius = new CornerRadius(7), VerticalAlignment = VerticalAlignment.Center };
-            ApplyTheme(badge, Border.BackgroundProperty, d.Online ? "AppPositiveSurfaceBrush" : "AppSubtleBrush");
-            Grid.SetColumn(badge, 2); row.Children.Add(badge);
-            var star = new Button { Content = favorites.Contains(d.Id) ? "★" : "☆", Width = 36, Height = 36, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-            ToolTip.SetTip(star, favorites.Contains(d.Id) ? "取消收藏" : "收藏设备");
-            Avalonia.Automation.AutomationProperties.SetName(star, (favorites.Contains(d.Id) ? "取消收藏 " : "收藏 ") + d.Name);
-            star.Click += (_, _) => { if (!favorites.Add(d.Id)) favorites.Remove(d.Id); SaveFavorites(); RenderDevices(); };
-            Grid.SetColumn(star, 3); row.Children.Add(star);
-            var inspect = new Button { Content = "详情", VerticalAlignment = VerticalAlignment.Center };
-            inspect.Click += (_, _) => { ShowDevice(d); RenderDevices(); }; Grid.SetColumn(inspect, 4); row.Children.Add(inspect);
-            var deviceCard = Card(row, 18);
-            if (selectedDeviceId == d.Id) ApplyTheme(deviceCard, Border.BorderBrushProperty, "AppAccentBrush");
-            if (!d.IsCurrent && d.Category == "desktop")
-            {
-                var connect = new Button { Content = "远程控制", IsEnabled = d.Online && d.ControlledSupport && d.Controllable, VerticalAlignment = VerticalAlignment.Center };
-                ApplyTheme(connect, Button.BackgroundProperty, "AppAccentBrush"); ApplyTheme(connect, Button.ForegroundProperty, "AppOnAccentBrush");
-                ToolTip.SetTip(connect, connect.IsEnabled ? "在独立窗口中连接" : "设备需在线并允许被控");
-                connect.Click += (_, _) => OpenRemote(d); Grid.SetColumn(connect, 5); row.Children.Add(connect);
-            }
-            deviceRows.Children.Add(deviceCard);
+            var card = BuildPreviewCard(matches[i]);
+            Grid.SetColumn(card, i % columns); Grid.SetRow(card, i / columns); deviceRows.Children.Add(card);
         }
     }
     private void OpenRemote(UuDevice device)
@@ -292,6 +297,7 @@ public sealed partial class URemoteView
     private void ShowDevice(UuDevice device)
     {
         selectedDeviceId = device.Id;
+        deviceDetail.IsVisible = true;
         deviceDetail.Children.Clear();
         var copy = new Button { Content = "复制设备编号" };
         copy.Click += async (_, _) =>
@@ -299,7 +305,7 @@ public sealed partial class URemoteView
             try { if (TopLevel.GetTopLevel(this)?.Clipboard is { } board) { await board.SetTextAsync(device.Id); copy.Content = "已复制"; } }
             catch { copy.Content = "复制失败"; }
         };
-        var close = new Button { Content = "收起" }; close.Click += (_, _) => { selectedDeviceId = null; deviceDetail.Children.Clear(); RenderDevices(); };
+        var close = new Button { Content = "收起" }; close.Click += (_, _) => { selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false; RenderDevices(); };
         deviceDetail.Children.Add(Card(new StackPanel { Spacing = 10, Children = {
             Text(device.Name, 18), Text($"{device.PlatformName} · {device.StatusName}"),
             Text("设备编号  " + device.Id, 12, true), Text("客户端版本  " + (device.Version.Length == 0 ? "未提供" : device.Version), 12, true),

@@ -17,6 +17,14 @@ void Reject(Action action, string label)
     { Check(true, label); return; }
     throw new Exception("FAIL: " + label);
 }
+using (var previews = System.Text.Json.JsonDocument.Parse("""
+{"data":{"desktop_devices":[{"device_id":"a","wallpaper_url":"https://example.com/preview.png?signature=abc"},{"device_id":"b","wallpaper_url":"file:///etc/passwd"},{"device_id":"c","wallpaper_url":"https://user:secret@example.com/image"},{"device_id":"d"}]}}
+"""))
+{
+    var parsed = UuDeviceCatalog.Parse(previews.RootElement, "a");
+    Check(parsed[0].WallpaperUrl == "https://example.com/preview.png?signature=abc", "catalog preserves signed HTTPS preview URL");
+    Check(parsed.Skip(1).All(d => d.WallpaperUrl.Length == 0), "catalog rejects file and credential URLs and supports missing previews");
+}
 using (var catalog = System.Text.Json.JsonDocument.Parse("""
 {"data":{"desktop_devices":[{"device_id":"self","alias":"Fixture Linux","platform":4,"status":"CONNECTED","controllable":true,"controlled_support":true},{"device_id":"offline","name":"Fixture Windows","platform":"1","status":"DISCONNECTED","controllable":true}],"mobile_devices":[{"device_id":"mobile","platform":3,"status":"DISCONNECTED"},{"device_id":"self"}],"tv_devices":[]}}
 """))

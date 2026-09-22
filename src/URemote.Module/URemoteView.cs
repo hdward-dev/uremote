@@ -88,6 +88,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 var check = new CheckBox { Content = "显示屏 " + (outputs.Count + 1), IsChecked = true, Margin = new Thickness(0, 0, 16, 8) };
                 outputs.Add((id, check)); screens.Children.Add(check);
             }
+            _ = RefreshLocalScreensAsync();
             hostSwitch.IsEnabled = true;
             if (hostEnabled && Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") Start();
             else { hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "被控已关闭"; detail.Text = "可手动开启被控。"; }
@@ -119,6 +120,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 }
                 Report("display-list-refreshed;count=" + current.Length);
             }
+            _ = RefreshLocalScreensAsync();
             StartCore();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
@@ -262,6 +264,11 @@ public sealed partial class URemoteView : UserControl, IDisposable
         // Cleanup does not depend on the UI dispatcher, so the host can safely unload afterwards.
         try { session?.GetAwaiter().GetResult(); } catch { }
         deviceTimer?.Stop();
+        previewHttp.Dispose();
+        foreach (var bitmap in previewCache.Values) bitmap.Dispose();
+        previewCache.Clear();
+        foreach (var bitmap in localBitmaps) bitmap.Dispose();
+        localBitmaps.Clear();
         sessionStop?.Dispose();
         if (login is not null) login.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _ = initialize.ContinueWith(_ => lifetime.Dispose(), TaskScheduler.Default);

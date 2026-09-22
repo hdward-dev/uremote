@@ -7,8 +7,8 @@ using URemote.Host;
 namespace URemote.Module;
 public sealed partial class URemoteView
 {
-    private readonly TextBox assistanceId = new() { IsReadOnly = true, Text = "正在获取…", FontSize = 24 };
-    private readonly TextBox assistanceCode = new() { IsReadOnly = true, PasswordChar = '●', FontSize = 24 };
+    private readonly TextBox assistanceId = new() { IsReadOnly = true, Text = "正在获取…", FontSize = 18 };
+    private readonly TextBox assistanceCode = new() { IsReadOnly = true, PasswordChar = '●', FontSize = 18 };
     private readonly TextBlock assistanceHint = new() { Text = "获取本机协助信息后，可在官方客户端输入协助码连接。", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private string? assistanceDevice;
     private bool allowAssistance = true;
@@ -45,14 +45,16 @@ public sealed partial class URemoteView
         reveal.Click += (_, _) => { var hide = assistanceCode.PasswordChar == '\0'; assistanceCode.PasswordChar = hide ? '●' : '\0'; reveal.Content = hide ? "显示" : "隐藏"; };
         rotate.Click += (_, _) => { if(assistanceDevice is { } device) { assistanceCode.Text = HostAssistance.Rotate(device); assistanceHint.Text = "验证码已更换；旧码不能用于新的协助连接。"; } };
         reload.Click += async (_, _) => await RefreshAssistanceAsync();
-        var columns = new Grid { ColumnDefinitions = new("*,*"), ColumnSpacing = 18 };
-        var left = new StackPanel { Spacing = 8, Children = { Text("本机协助码",13,true),assistanceId,copyId } };
-        var right = new StackPanel { Spacing = 8, Children = { Text("临时验证码",13,true),assistanceCode,
-            new WrapPanel { Orientation = Orientation.Horizontal, Children = { reveal, copyCode, rotate } } } };
-        columns.Children.Add(left); Grid.SetColumn(right,1); columns.Children.Add(right);
+        var columns = new StackPanel { Spacing = 12, Children = {
+            Text("协助码", 12, true), assistanceId, copyId,
+            Text("验证码", 12, true), assistanceCode,
+            new WrapPanel { Orientation = Orientation.Horizontal, Children = { reveal, copyCode, rotate } }
+        } };
         assistanceCredentials = columns; columns.IsEnabled = allowAssistance;
-        return Card(new StackPanel { Spacing = 12, Children = { heading, columns, assistanceHint,
-            Text("需开启本机被控。验证码在应用重启或手动更换后更新。",12,true),reload } });
+        foreach (var button in new[] { copyId, copyCode, reveal, rotate, reload }) { button.FontSize = 11; button.Padding = new Thickness(8, 5); }
+        assistanceSwitch.MinWidth = 0;
+        assistanceHint.FontSize = 12;
+        return new StackPanel { Spacing = 12, Children = { heading, columns, assistanceHint, reload } };
     }
     private void UpdateAssistanceState()
     {

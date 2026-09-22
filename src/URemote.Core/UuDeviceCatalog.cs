@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace URemote.Core;
 
 public sealed record UuDevice(string Id, string Name, string Category, int Platform, string Status,
-    bool Controllable, bool ControlledSupport, string Version, bool IsCurrent)
+    bool Controllable, bool ControlledSupport, string Version, bool IsCurrent, string WallpaperUrl = "")
 {
     public bool Online => Status is "CONNECTED" or "ONLINE";
     public string PlatformName => IsCurrent && OperatingSystem.IsLinux() ? "Linux" : Platform switch
@@ -33,10 +33,17 @@ public static class UuDeviceCatalog
                 var platform = Text(entry, "platform");
                 result.Add(new(id, name.Length == 0 ? "未命名设备" : name, category,
                     int.TryParse(platform, out var number) ? number : 0, Text(entry, "status").ToUpperInvariant(),
-                    Boolean(entry, "controllable"), Boolean(entry, "controlled_support"), Text(entry, "version_name"), id == currentId));
+                    Boolean(entry, "controllable"), Boolean(entry, "controlled_support"), Text(entry, "version_name"), id == currentId, Wallpaper(entry)));
             }
         }
         return result;
+    }
+    private static string Wallpaper(JsonElement entry)
+    {
+        if (!entry.TryGetProperty("wallpaper_url", out var item) || item.ValueKind != JsonValueKind.String) return "";
+        var value = item.GetString() ?? "";
+        return value.Length <= 4096 && Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            && uri.Scheme == "https" && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 ? value : "";
     }
     private static string Text(JsonElement value, string key) => value.TryGetProperty(key, out var item)
         ? item.ValueKind == JsonValueKind.String ? new string((item.GetString() ?? "").Where(c => !char.IsControl(c)).Take(256).ToArray())
