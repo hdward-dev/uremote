@@ -1,1 +1,1 @@
-{"id":"u-remote","name":"U远程","description":"星栈远程控制插件 · 设备管理、远程桌面、本机被控与远程终端","version":"0.5.0","entryAssembly":"URemote.Module.dll","entryType":"URemote.Module.URemoteApplicationModule","icon":"monitor","category":"工具","order":45}
+{"id":"u-remote","name":"U远程","description":"星栈远程控制插件 · 设备管理、远程桌面、本机被控与远程终端","version":"0.5.1","entryAssembly":"URemote.Module.dll","entryType":"URemote.Module.URemoteApplicationModule","icon":"monitor","category":"工具","order":45}

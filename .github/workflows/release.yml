@@ -1,0 +1,49 @@
+name: Publish plugin release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: plugin-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.400'
+      - name: Read plugin version
+        run: |
+          python3 - <<'PYCODE'
+          import json, os, re
+          from pathlib import Path
+          version = json.loads(Path('src/URemote.Module/app.json').read_text())['version']
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('Invalid plugin release version')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'PLUGIN_VERSION={version}\n')
+          PYCODE
+      - run: dotnet restore URemote.slnx
+      - run: dotnet build URemote.slnx -c Release --no-restore -m:1
+      - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
+      - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
+      - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check
+      - name: Package and validate plugin
+        run: python3 scripts/package.py
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/release-notes.md <<'NOTES'
+          U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
+          星栈下载：https://github.com/hdward-dev/asterdock/releases
+
+          本次更新包含远程协助连接、剪贴板协议修订、当前控制端与连接时长、主动断开控制，以及新版状态布局和屏幕 FPS 显示。
+          附带 SHA256SUMS.txt 用于校验插件包。
+          NOTES
+          gh release create "v$PLUGIN_VERSION" artifacts/release/AsterDock-App-u-remote.appbundle artifacts/release/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "U远程 v$PLUGIN_VERSION · 星栈远程控制插件" --notes-file /tmp/release-notes.md
