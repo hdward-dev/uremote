@@ -7,7 +7,7 @@ using URemote.Host;
 
 internal static class HostInput
 {
-    public static async Task RunAsync(HostMediaPeer media, IReadOnlyList<uint> outputs, CancellationToken ct, Action<string> report, bool enableInput = true, bool enableClipboard = false, HostVideoSettings? profiles = null, bool enableFiles = true)
+    public static async Task RunAsync(HostMediaPeer media, IReadOnlyList<uint> outputs, CancellationToken ct, Action<string> report, bool enableInput = true, bool enableClipboard = false, HostVideoSettings? profiles = null, bool enableFiles = true, Action? inputApplied = null)
     {
         while (media.State != RTCPeerConnectionState.connected) await Task.Delay(100, ct);
         await using var fileTransfer = enableFiles ? new HostFileTransfer(media.SendData, report, ct) : null;
@@ -84,7 +84,8 @@ internal static class HostInput
                 }
                 else if (input?.Key is { } key) await keyboard!.ApplyAsync(key, ct);
                 else { if (observed.Add("ignored")) report("input-envelope-ignored"); continue; }
-                if (++count == 1 || count % 100 == 0) report("input-events-applied=" + count);
+                if (++count == 1) inputApplied?.Invoke();
+                if (count == 1 || count % 100 == 0) report("input-events-applied=" + count);
             }
             catch (Exception e) when (e is FormatException or JsonException or ArgumentException or KeyNotFoundException)
             { if (observed.Add("malformed"))

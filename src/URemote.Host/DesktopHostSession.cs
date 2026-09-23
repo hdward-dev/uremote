@@ -22,7 +22,7 @@ public static class DesktopHostSession
     }
 
     public static async Task RunAsync(string identityPath, string ffmpeg, IReadOnlyList<uint> outputs,
-        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null)
+        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null)
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
         if (outputs.Count > 5 || outputs.Distinct().Count() != outputs.Count || (duration != Timeout.InfiniteTimeSpan && (duration <= TimeSpan.Zero
@@ -86,7 +86,7 @@ public static class DesktopHostSession
             retrySeconds = 2;
             using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             var watch = WatchDisplaysAsync(available, previewStop, report);
-            try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }); }
+            try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged); }
             finally { previewStop.Cancel(); await watch; }
             }
             catch (Exception e) when (!deadline.IsCancellationRequested && e is IOException or HttpRequestException or TimeoutException or System.Net.WebSockets.WebSocketException or InvalidOperationException or FormatException or NotSupportedException or OperationCanceledException or System.Net.Sockets.SocketException or ArgumentException)
@@ -97,6 +97,7 @@ public static class DesktopHostSession
         catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         finally
         {
+            connectionChanged?.Invoke(null);
             report("stopping");
             wallpaperStop.Cancel();
             try {await wallpaper;}catch(OperationCanceledException){}

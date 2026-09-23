@@ -81,6 +81,12 @@ public sealed class UuSignalClient : IAsyncDisposable
     public Task<UuSignalFrame> GetRoomInfoAsync(CancellationToken ct = default) =>
         EmitWithAckAsync("room_info", null, TimeSpan.FromSeconds(10), ct);
 
+    // Official publisher ClearRoom emits clear_out with no arguments and no ACK callback.
+    // It clears subscribers in this room, not the publisher's signaling connection.
+    // HostPreview currently permits one active incoming peer; this is not a per-peer API.
+    public Task ClearControlRoomAsync(CancellationToken ct = default) =>
+        SendEventAsync("clear_out", null, ct: ct);
+
     public async Task<UuSignalFrame> EmitWithAckAsync(string name, JsonNode? payload,
         TimeSpan timeout, CancellationToken ct = default, IReadOnlyList<byte[]>? attachments = null)
     {

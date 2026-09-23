@@ -8,7 +8,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null)
     {
         report ??= Console.WriteLine;
         await using var ownedTerminals = terminalManager is null ? new HostTerminalManager() : null;
@@ -24,6 +24,7 @@ public static class HostPreview
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = stop.Token;
         var candidates = Channel.CreateBounded<(HostPeerId Id, JsonObject Value)>(256);
+        var disconnects = Channel.CreateUnbounded<CancellationTokenSource>(new() { SingleReader = true });
         HostMediaPeer? media = null;
         HostPeerId? active = null;
         var answered = false;
@@ -62,8 +63,42 @@ public static class HostPreview
 
         async Task ReceiveAsync()
         {
-            await foreach (var frame in signal.Events.ReadAllAsync(token))
+            var signalReady = signal.Events.WaitToReadAsync(token).AsTask();
+            var disconnectReady = disconnects.Reader.WaitToReadAsync(token).AsTask();
+            while (true)
             {
+                await Task.WhenAny(signalReady, disconnectReady);
+                token.ThrowIfCancellationRequested();
+                if (disconnectReady.IsCompleted)
+                {
+                    await disconnectReady;
+                    while (disconnects.Reader.TryRead(out var requestedLifetime))
+                    {
+                        // A stale card must never disconnect a replacement session, even if its peer ID is reused.
+                        if (!ReferenceEquals(requestedLifetime, peerStop)) continue;
+                        try
+                        {
+                            using var sendDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                            sendDeadline.CancelAfter(TimeSpan.FromSeconds(3));
+                            await signal.ClearControlRoomAsync(sendDeadline.Token);
+                            report("control-room-clear-sent");
+                        }
+                        finally
+                        {
+                            // Always revoke local input/capture, including when signaling is unavailable.
+                            // A signaling failure is handled by the outer host reconnect loop.
+                            await ClosePeerAsync();
+                            report("viewer-released");
+                        }
+                        report("viewer-disconnected-locally; publisher-kept-online");
+                    }
+                    disconnectReady = disconnects.Reader.WaitToReadAsync(token).AsTask();
+                    continue;
+                }
+                if (!await signalReady) break;
+                var hasFrame = signal.Events.TryRead(out var frame);
+                signalReady = signal.Events.WaitToReadAsync(token).AsTask();
+                if (!hasFrame || frame is null) continue;
                 if (assistance is not null && frame.Packet?.Data is JsonArray push
                     && push[0]?.GetValue<string>() == "push" && HostAssistance.Challenge(push) is { } challenge)
                 {
@@ -102,6 +137,7 @@ public static class HostPreview
                         var fileOnly = update.Peer.Options.CaptureType == 5;
                         var dataOnly = terminal || fileOnly;
                         report("session-capture-type=" + update.Peer.Options.CaptureType);
+                        report("session-type-value=" + update.Peer.Options.TypeValue);
                         var platform = request["controller_platform"]?.ToJsonString();
                         report("controller-platform=" + (int.TryParse(platform, out var platformCode) ? platformCode : -1));
                         var mobileSingleStream = !terminal && (update.Peer.Options.ClientType == 1 || platformCode == 3);
@@ -120,10 +156,38 @@ public static class HostPreview
                         peerStop = CancellationTokenSource.CreateLinkedTokenSource(token, assistanceToken);
                         var mediaLifetime = peerStop;
                         var notifiedAssistance = 0;
+                        var notifiedConnection = 0;
+                        var disconnectRequested = 0;
+                        var connectionOptions = update.Peer.Options;
+                        HostControlConnection? connectionInfo = null;
+                        var connectionGate = new object();
+                        _ = mediaLifetime.Token.Register(() => { if (active == id) connectionChanged?.Invoke(null); });
                         var isAssistance = update.Peer.Options.ControlConnectType == 2;
                         media.StateChanged += state =>
                         {
                             report("media-state=" + state);
+                            if (active == id)
+                            {
+                                if (state == RTCPeerConnectionState.connected && !mediaLifetime.IsCancellationRequested
+                                    && Interlocked.Exchange(ref notifiedConnection, 1) == 0)
+                                {
+                                    lock (connectionGate)
+                                    {
+                                        connectionInfo = HostControlConnection.FromRequest(request, connectionOptions) with
+                                        {
+                                            ViewOnly = !enableInput,
+                                            RequestDisconnect = () =>
+                                            {
+                                                if (!token.IsCancellationRequested && Interlocked.Exchange(ref disconnectRequested, 1) == 0)
+                                                    disconnects.Writer.TryWrite(mediaLifetime);
+                                            }
+                                        };
+                                        connectionChanged?.Invoke(connectionInfo);
+                                    }
+                                }
+                                else if (state is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected)
+                                    connectionChanged?.Invoke(null);
+                            }
                             if (isAssistance && state == RTCPeerConnectionState.connected && Interlocked.Exchange(ref notifiedAssistance, 1) == 0) assistanceConnected?.Invoke();
                             if (state is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected)
                                 try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
@@ -136,7 +200,15 @@ public static class HostPreview
                             report("ice-completion-notified");
                         }, report, profiles);
                         input = terminal ? HostTerminalPeer.RunAsync(media, terminalManager, enableInput, peerStop.Token, report)
-                            : HostInput.RunAsync(media, outputs, peerStop.Token, report, enableInput && !fileOnly, enableClipboard && !fileOnly, profiles);
+                            : HostInput.RunAsync(media, outputs, peerStop.Token, report, enableInput && !fileOnly, enableClipboard && !fileOnly, profiles, inputApplied: () =>
+                            {
+                                lock (connectionGate)
+                                {
+                                    if (active != id || mediaLifetime.IsCancellationRequested || connectionInfo is null) return;
+                                    connectionInfo = connectionInfo with { HasInputActivity = true };
+                                    connectionChanged?.Invoke(connectionInfo);
+                                }
+                            });
                         audio = !dataOnly && enableAudio ? StreamAudioAsync(media, report, peerStop.Token) : Task.CompletedTask;
                         var activeMedia = media;
                         void PeerFailed(Task task)
@@ -187,6 +259,7 @@ public static class HostPreview
         {
             if (active is { } oldPeer) sessions.Remove(oldPeer);
             active = null;
+            connectionChanged?.Invoke(null);
             Volatile.Write(ref answered, false);
             if (peerStop is not null) await peerStop.CancelAsync();
             try { await Task.WhenAll(video, input, audio); }

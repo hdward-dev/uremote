@@ -41,6 +41,19 @@ static class SignalClientTests
         using var eventTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         check(UuSignalReader.DecodeGzipSdp(await client.Events.ReadAsync(eventTimeout.Token)) == "v=0\r\ns=fixture\r\n", "inbound binary event reaches consumer intact");
 
+        await client.ClearControlRoomAsync();
+        check((await transport.NextSent()).Text == "42[\"clear_out\"]",
+            "publisher disconnect matches official clear_out: no arguments and no ACK");
+        check(client.IsConnected && !client.Completion.IsCompleted,
+            "clearing control room keeps publisher signaling connected");
+        transport.FeedText("2after-clear");
+        check((await transport.NextSent()).Text == "3after-clear", "publisher heartbeat continues after local disconnect");
+        var afterClear = client.GetRoomInfoAsync();
+        var afterClearPacket = SocketIoCodec.Parse((await transport.NextSent()).Text[1..]);
+        transport.FeedText($"43{afterClearPacket.Id}[{{\"publisher\":{{\"role\":\"publisher\"}}}}]");
+        check((await afterClear).Packet?.Data?[0]?["publisher"]?["role"]?.GetValue<string>() == "publisher",
+            "publisher can use the same room after disconnecting controller");
+
         var timedOut = client.EmitWithAckAsync("room_info", null, TimeSpan.FromMilliseconds(30));
         var latePacket = SocketIoCodec.Parse((await transport.NextSent()).Text[1..]);
         try { await timedOut; check(false, "ACK deadline enforced"); }

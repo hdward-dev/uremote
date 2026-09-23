@@ -74,8 +74,11 @@ public sealed partial class URemoteView
         ApplyTheme(this, BackgroundProperty, "AppPageBrush");
         ApplyTheme(status, TextBlock.ForegroundProperty, "AppStrongTextBrush"); status.FontSize = 19; status.TextWrapping = TextWrapping.Wrap;
         ApplyTheme(detail, TextBlock.ForegroundProperty, "AppMutedBrush"); detail.FontSize = 13;
+        detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text);
+        detail.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text); };
         ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush"); metrics.FontSize = 12; metrics.Text = "双屏桌面 · 远程终端";
         ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush");
+        status.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) UpdateHostBadge(); };
         var brand = new StackPanel { Spacing = 5, Margin = new Thickness(14, 12, 0, 30), Children = { Text("U远程", 25), Text("远程工作空间", 12, true) } };
         var tabs = new StackPanel { Spacing = 8 };
         foreach (var item in new[] { ("我的设备", "▤", 0), ("本机被控", "▣", 1), ("账号与设置", "⚙", 2), ("远程协助", "♧", 3), ("文件传输", "⇄", 4) })
@@ -135,8 +138,15 @@ public sealed partial class URemoteView
         hostSwitch.MinWidth = 0;
         var screenLink = new Button { Content = "显示器与共享设置", HorizontalAlignment = HorizontalAlignment.Stretch };
         screenLink.Click += (_, _) => ShowPage(1);
-        var right = new StackPanel { Spacing = 18, Children = { Text("本机被控", 20), Text(LinuxDeviceProfile.DeviceName, 17), hostBadge, hostActions,
-            localScreens, status, detail, metrics, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard() } };
+        var hostHeading = new Grid { ColumnDefinitions = new("Auto,*") };
+        hostHeading.Children.Add(Text("本机被控", 20));
+        hostBadge.HorizontalAlignment = HorizontalAlignment.Right;
+        hostBadge.VerticalAlignment = VerticalAlignment.Center;
+        hostBadge.Margin = new Thickness(8, 0, 0, 0);
+        hostBadge.TextTrimming = TextTrimming.CharacterEllipsis;
+        Grid.SetColumn(hostBadge, 1); hostHeading.Children.Add(hostBadge);
+        var right = new StackPanel { Spacing = 18, Children = { hostHeading, hostActions,
+            localScreens, detail, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard(), BuildConnectionCard() } };
         status.FontSize = 14; detail.FontSize = 12;
         var body = new Grid { ColumnDefinitions = new("190,*,300"), RowDefinitions = new("*,Auto") };
         var leftBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) };

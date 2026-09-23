@@ -166,7 +166,8 @@ public sealed partial class URemoteView : UserControl, IDisposable
         status.Text = "正在上线"; detail.Text = "正在连接 UU 服务…";
         session = Task.Run(async () =>
         {
-            try { await DesktopHostSession.RunAsync(path, ffmpeg, selected, enabled, limit, Report, token, sound, sync, indices); }
+            try { await DesktopHostSession.RunAsync(path, ffmpeg, selected, enabled, limit, Report, token, sound, sync, indices,
+                connection => Post(() => UpdateControlConnection(connection))); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception e)
             {
@@ -231,15 +232,15 @@ public sealed partial class URemoteView : UserControl, IDisposable
             case "terminal-detached": metrics.Text = "终端会话已保留，可重新连接"; break;
             case "terminal-closed": metrics.Text = "终端会话已结束"; break;
             case "ready": hostBadge.Text = "●  被控已开启"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush"); status.Text = "等待连接"; detail.Text = "已上线，可通过 UU 官方客户端连接。"; break;
-            case "viewer-released": status.Text = "等待连接"; detail.Text = "控制端已断开，本机仍允许被控。"; break;
+            case "viewer-released": status.Text = "等待连接"; detail.Text = ""; break;
             case "stopping": status.Text = "正在停止"; break;
             case "stopped": hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); if (!restoreFailed) { status.Text = "被控已关闭"; detail.Text = "远程连接已断开，键鼠与终端会话已释放。"; } break;
             case "restore-failed": restoreFailed = true; status.Text = "连接已断开，服务器开关恢复失败"; break;
             default: if (value.StartsWith("file-transfer-progress;", StringComparison.Ordinal)) {
                     var fields = value.Split(';'); transferState.Text = "正在传输 · " + string.Join(" / ", fields.Skip(1).Select(x => x.Split('=').Last())) + " 字节";
                 }
-                if (value.StartsWith("video-frames-sent=", StringComparison.Ordinal)) { status.Text = "正在共享屏幕"; detail.Text = "可随时关闭被控开关。"; var fields = value.Split(';');
-                    metrics.Text = string.Join(" · ", fields.Skip(1).Select(f => f.Replace("screen=", "显示屏 ").Replace("fps=", "FPS "))); } break;
+                if (value.StartsWith("video-frames-sent=", StringComparison.Ordinal)) UpdateScreenFps(value);
+                break;
         }
     });
     }
@@ -267,6 +268,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         // Cleanup does not depend on the UI dispatcher, so the host can safely unload afterwards.
         try { session?.GetAwaiter().GetResult(); } catch { }
         deviceTimer?.Stop();
+        connectionTimer.Stop(); currentControlConnection = null;
         previewHttp.Dispose();
         foreach (var bitmap in previewCache.Values) bitmap.Dispose();
         previewCache.Clear();

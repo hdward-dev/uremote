@@ -151,7 +151,7 @@ public sealed partial class URemoteView
             removeCustom.IsVisible = !string.IsNullOrEmpty(codeSettings?.CustomCode);
         };
         updateCodeModeUi();
-        var reload = new Button { Content = "重新获取" };
+        var reload = new Button { Content = "重新获取", HorizontalAlignment = HorizontalAlignment.Stretch };
         copyId.Click += async (_, _) => await CopyAssistanceAsync(assistanceId.Text);
         copyCode.Click += async (_, _) => await CopyAssistanceAsync(assistanceCode.Text);
         reveal.Click += (_, _) => { var hide = assistanceCode.PasswordChar == '\0'; assistanceCode.PasswordChar = hide ? '●' : '\0';  };
@@ -165,7 +165,6 @@ public sealed partial class URemoteView
             codeMode, codeRow, customEditor
         } };
         assistanceCredentials = columns; columns.IsEnabled = allowAssistance;
-        reload.FontSize = 11; reload.Padding = new Thickness(8, 5);
         assistanceSwitch.MinWidth = 0;
         assistanceHint.FontSize = 12;
         return new StackPanel { Spacing = 12, Children = { heading, columns, assistanceHint, reload } };

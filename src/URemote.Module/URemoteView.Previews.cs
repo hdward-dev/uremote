@@ -16,6 +16,8 @@ public sealed partial class URemoteView
 {
     private readonly WrapPanel localScreens = new() { Orientation = Orientation.Horizontal };
     private readonly List<WriteableBitmap> localBitmaps = [];
+    private readonly Dictionary<int, TextBlock> localScreenLabels = [];
+    private readonly Dictionary<int, string> localScreenFps = [];
     private bool loadingScreens;
     private readonly Dictionary<string, Bitmap> previewCache = [];
     private readonly HttpClient previewHttp = new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(12) };
@@ -59,12 +61,15 @@ public sealed partial class URemoteView
         loadingScreens = true;
         try
         {
-            localScreens.Children.Clear();
+            localScreens.Children.Clear(); localScreenLabels.Clear();
             foreach (var old in localBitmaps) old.Dispose(); localBitmaps.Clear();
             foreach (var (id, check) in outputs.Take(5).ToArray())
             {
                 var image = new Image { Width = 112, Height = 63, Stretch = Stretch.Uniform };
-                var tile = new Button { Content = new StackPanel { Spacing = 5, Children = { image, Text(check.Content?.ToString() ?? "显示器", 11, true) } },
+                var screenIndex = outputs.FindIndex(x => x.Id == id) + 1;
+                var label = Text($"显示屏 {screenIndex}" + (localScreenFps.TryGetValue(screenIndex, out var fps) ? $" · FPS {fps}" : ""), 11, true);
+                localScreenLabels[screenIndex] = label;
+                var tile = new Button { Content = new StackPanel { Spacing = 5, Children = { image, label } },
                     Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 6) };
                 tile.Click += (_, _) => ShowPage(1); ToolTip.SetTip(tile, "本机屏幕快照 · 点击修改共享设置"); localScreens.Children.Add(tile);
                 if (!hostEnabled || Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") == "1") continue;
@@ -98,6 +103,23 @@ public sealed partial class URemoteView
             }
         }
         finally { loadingScreens = false; }
+    }
+
+    private void UpdateScreenFps(string value)
+    {
+        var fields = value.Split(';').Select(x => x.Split('=', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1]);
+        if (!fields.TryGetValue("screen", out var screen) || !int.TryParse(screen, out var index)
+            || !fields.TryGetValue("fps", out var fps)) return;
+        var shared = outputs.Select((o, i) => (o, i)).Where(x => x.o.Check.IsChecked == true).Select(x => x.i + 1).ToArray();
+        if (index > 0 && index <= shared.Length) index = shared[index - 1];
+        localScreenFps[index] = fps;
+        if (localScreenLabels.TryGetValue(index, out var label)) label.Text = $"显示屏 {index} · FPS {fps}";
+    }
+
+    private void ClearScreenFps()
+    {
+        localScreenFps.Clear();
+        foreach (var (index, label) in localScreenLabels) label.Text = $"显示屏 {index}";
     }
 
     private Control BuildPreviewCard(UuDevice device)

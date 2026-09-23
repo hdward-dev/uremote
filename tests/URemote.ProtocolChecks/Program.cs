@@ -4,6 +4,7 @@ using URemote.Core;
 using URemote.Probe;
 
 var passed = 0;
+ConnectionInfoChecks.Run();
 void Check(bool condition, string label)
 {
     if (!condition) throw new Exception("FAIL: " + label);
