@@ -86,7 +86,7 @@ public static class DesktopHostSession
             retrySeconds = 2;
             using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             var watch = WatchDisplaysAsync(available, previewStop, report);
-            try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId)); }
+            try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }); }
             finally { previewStop.Cancel(); await watch; }
             }
             catch (Exception e) when (!deadline.IsCancellationRequested && e is IOException or HttpRequestException or TimeoutException or System.Net.WebSockets.WebSocketException or InvalidOperationException or FormatException or NotSupportedException or OperationCanceledException or System.Net.Sockets.SocketException or ArgumentException)

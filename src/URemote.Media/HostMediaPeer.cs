@@ -34,16 +34,16 @@ public sealed class HostMediaPeer : IDisposable
     {
         if (activeVideoStreams is < 0 or > 5) throw new ArgumentOutOfRangeException(nameof(activeVideoStreams));
         this.activeVideoStreams = activeVideoStreams; this.enableAudio = enableAudio;
+        var direct = DirectMediaNetwork.FromEnvironment();
         peer = new RTCPeerConnection(new RTCConfiguration
         {
-            iceServers = iceServers ?? [], X_BindAddress = bindAddress,
+            iceServers = iceServers ?? [], X_BindAddress = direct?.Address ?? bindAddress,
             X_UseRtpFeedbackProfile = true,
             iceTransportPolicy = forceRelay ? RTCIceTransportPolicy.relay : RTCIceTransportPolicy.all
         });
-        peer.onicecandidate += candidate => LocalCandidate?.Invoke(new JsonObject
-        {
-            ["candidate"] = candidate.candidate, ["sdpMid"] = candidate.sdpMid, ["sdpMLineIndex"] = (int)candidate.sdpMLineIndex
-        });
+        try { direct?.Bind(peer.GetRtpChannel().RtpSocket); } catch { peer.Dispose(); throw; }
+        // Use WebRTC JSON, not the unprefixed SDP attribute body (candidate.candidate).
+        peer.onicecandidate += candidate => LocalCandidate?.Invoke(JsonNode.Parse(candidate.toJSON())!.AsObject());
         peer.onconnectionstatechange += state => StateChanged?.Invoke(state);
         peer.oniceconnectionstatechange += state => Diagnostic?.Invoke("ice-state=" + state);
         peer.onicegatheringstatechange += state =>

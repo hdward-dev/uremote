@@ -50,6 +50,7 @@ public sealed class UuSignalClient : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(room.Token)) throw new ArgumentException("Room authorization is required.");
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(room.WebSocketConnectTimeoutMs, 1000, 60000));
         var ws = new ClientWebSocket();
+        ws.Options.Proxy = null; // Direct transport; do not inherit HTTP/SOCKS proxy settings.
         ws.Options.KeepAliveInterval = Timeout.InfiniteTimeSpan; // Engine.IO owns its heartbeat.
         ws.Options.SetRequestHeader("X-NRD-AUTH", room.Token);
         ws.Options.SetRequestHeader("X-NRD-CONTROLLING", "0");

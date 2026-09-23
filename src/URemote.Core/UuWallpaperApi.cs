@@ -4,7 +4,7 @@ namespace URemote.Core;
 
 public sealed class UuWallpaperApi(LoginState state,HttpMessageHandler? handler=null):IDisposable
 {
-    private readonly HttpClient http=new(handler??new SocketsHttpHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(30)};
+    private readonly HttpClient http=new(handler??new SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false}){Timeout=TimeSpan.FromSeconds(30)};
     public async Task UploadAsync(byte[] png,CancellationToken ct)
     {
         if(png.Length is <8 or >5_000_000 || !png.AsSpan(0,8).SequenceEqual(new byte[]{137,80,78,71,13,10,26,10}))throw new ArgumentException("Expected bounded PNG wallpaper.");

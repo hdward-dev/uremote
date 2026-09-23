@@ -62,6 +62,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         try { if (File.Exists(settingsFile) && JsonSerializer.Deserialize<Settings>(File.ReadAllText(settingsFile)) is { } saved)
             { identity.Text = saved.Identity; encoder.Text = saved.Encoder; allowAssistance = saved.AllowAssistance; hostEnabled = saved.HostEnabled; } } catch (IOException) { } catch (JsonException) { }
         try { URemote.Core.HostAssistance.SetEnabled(DesktopHostSession.ReadIdentity(identity.Text!).State.DeviceId, allowAssistance); } catch { }
+        LoadAssistanceSettings();
         BuildInterface(dataDirectory);
         sendCode.Click += async (_, _) => await LoginAsync(false);
         completeLogin.Click += async (_, _) => await LoginAsync(true);
@@ -213,6 +214,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     {
         switch (value)
         {
+            case "assistance-code-rotated": UpdateAssistanceState(); break;
             case "file-transfer-received": transferState.Text = "文件已接收，已保存到接收目录。"; break;
             case "file-transfer-sent": transferState.Text = "文件已发送，对方已确认收到。"; break;
             case "file-transfer-send-failed": transferState.Text = "发送未完成，请在官方客户端重新尝试。"; break;

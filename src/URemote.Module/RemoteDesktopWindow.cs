@@ -32,11 +32,12 @@ public sealed class RemoteDesktopWindow : Window
     private bool closed;
     private int inputSent;
     private bool inputFailed;
-    private readonly bool mac;
+    private bool mac;
     public Task Completion { get; private set; } = Task.CompletedTask;
-    public RemoteDesktopWindow(UuDevice device, LoginState state, string ffmpeg)
+    public RemoteDesktopWindow(UuDevice device, LoginState state, string ffmpeg, AssistanceRequest? assistance = null)
     {
         mac = device.Platform == 4;
+        controller.TargetPlatform += platform => mac = platform == 4;
         Title = device.Name + " · U远程"; Width = 1280; Height = 800; MinWidth = 640; MinHeight = 440;
         Background = Brushes.Black;
         var disconnect = new Button { Content = "断开连接" }; disconnect.Click += (_, _) => Close();
@@ -56,6 +57,7 @@ public sealed class RemoteDesktopWindow : Window
         controller.Status += value => Console.WriteLine("controller-" + value);
         controller.Status += value => Dispatcher.UIThread.Post(() => { if (!closed) status.Text = value switch {
             "joining" => "正在请求连接…", "signaling" => "正在连接设备…", "negotiating" or "answer-received" => "正在建立画面通道…",
+            "ice-checking" => "正在尝试直连或中转…", "ice-failed" or "peer-failed" => "网络通道建立失败，请检查双方网络后重试。",
             "control-ready" or "peer-connected" => "已连接，等待画面…", "peer-disconnected" => "连接中断…", "closed" => "连接已结束", _ => status.Text }; });
         controller.Displays += ids => Dispatcher.UIThread.Post(() => {
             if (closed) return; displayIds = ids; display.ItemsSource = ids.Select(x => "显示屏 " + (x + 1)).ToArray();
@@ -81,7 +83,7 @@ public sealed class RemoteDesktopWindow : Window
         };
         video.KeyUp += (_, e) => { if (ControllerKeys.Map(e.PhysicalKey, e.Key, mac) is { } key) { if (keys.Remove(key)) SendKey(key, false); e.Handled = true; } };
         video.LostFocus += (_, _) => ReleaseInputs(); Deactivated += (_, _) => ReleaseInputs();
-        Opened += (_, _) => { paintTimer.Start(); Completion = RunAsync(state, device.Id, ffmpeg); };
+        Opened += (_, _) => { paintTimer.Start(); Completion = RunAsync(state, device.Id, ffmpeg, assistance); };
         Closed += (_, _) => { closed = true; ReleaseInputs(); stop.Cancel(); paintTimer.Stop(); video.Source = null; bitmap?.Dispose(); lock (frameGate) latest.Clear(); };
     }
     private bool Send(object value)
@@ -118,13 +120,13 @@ public sealed class RemoteDesktopWindow : Window
         using (var fb = bitmap.Lock()) for (int y = 0; y < frame.Height; y++) Marshal.Copy(frame.Pixels, y * frame.Width * 4, fb.Address + y * fb.RowBytes, frame.Width * 4);
         painted = frame; video.InvalidateVisual(); status.Text = $"已连接 · {frame.Width} × {frame.Height}";
     }
-    private async Task RunAsync(LoginState state, string target, string ffmpeg)
+    private async Task RunAsync(LoginState state, string target, string ffmpeg, AssistanceRequest? assistance = null)
     {
-        try { await controller.RunAsync(state, target, ffmpeg, stop.Token); }
+        try { await controller.RunAsync(state, target, ffmpeg, stop.Token, assistance: assistance); }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception e) {
             Console.WriteLine("controller-failed;type=" + e.GetType().Name);
-            if (!closed) status.Text = "连接失败，请确认设备在线、允许被控且未被占用。关闭窗口后可重试。";
+            if (!closed) status.Text = "连接失败，请确认设备在线、允许被控；协助连接还需检查协助码和验证码，或对方是否要求确认。关闭窗口后可重试。";
         }
         finally { if (!closed) { paintTimer.Stop(); ReleaseInputs(); } }
     }

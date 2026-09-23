@@ -8,7 +8,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null)
     {
         report ??= Console.WriteLine;
         await using var ownedTerminals = terminalManager is null ? new HostTerminalManager() : null;
@@ -119,9 +119,12 @@ public static class HostPreview
                         };
                         peerStop = CancellationTokenSource.CreateLinkedTokenSource(token, assistanceToken);
                         var mediaLifetime = peerStop;
+                        var notifiedAssistance = 0;
+                        var isAssistance = update.Peer.Options.ControlConnectType == 2;
                         media.StateChanged += state =>
                         {
                             report("media-state=" + state);
+                            if (isAssistance && state == RTCPeerConnectionState.connected && Interlocked.Exchange(ref notifiedAssistance, 1) == 0) assistanceConnected?.Invoke();
                             if (state is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed or RTCPeerConnectionState.disconnected)
                                 try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
                         };

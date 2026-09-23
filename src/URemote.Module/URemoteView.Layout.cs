@@ -128,7 +128,7 @@ public sealed partial class URemoteView
             Card(new Expander { Header = "高级设置", HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = advancedSettings }),
             Card(new StackPanel { Spacing = 8, Children = { Text("功能状态", 16), Text("已实测：双屏桌面、键鼠控制、退出后重连、远程终端命令执行。", 13, true),
                 Text("待验证：双向文本剪贴板、系统声音和画质切换效果。", 13, true) } }) } };
-        var assistancePage = new StackPanel { Spacing = 16, Children = { Text("远程协助", 26), Text("本机协助码与权限开关位于右侧。将协助码和验证码交给对方即可发起协助。", 14, true) } };
+        var assistancePage = BuildConnectAssistancePage();
         pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }];
         var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 8) };
         hostActions.Children.Add(Text("允许本机被控", 14)); Grid.SetColumn(hostSwitch, 1); hostActions.Children.Add(hostSwitch);
@@ -136,7 +136,7 @@ public sealed partial class URemoteView
         var screenLink = new Button { Content = "显示器与共享设置", HorizontalAlignment = HorizontalAlignment.Stretch };
         screenLink.Click += (_, _) => ShowPage(1);
         var right = new StackPanel { Spacing = 18, Children = { Text("本机被控", 20), Text(LinuxDeviceProfile.DeviceName, 17), hostBadge, hostActions,
-            localScreens, status, detail, metrics, screenLink, new Separator(), Text("远程协助", 20), BuildAssistanceCard() } };
+            localScreens, status, detail, metrics, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard() } };
         status.FontSize = 14; detail.FontSize = 12;
         var body = new Grid { ColumnDefinitions = new("190,*,300"), RowDefinitions = new("*,Auto") };
         var leftBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) };
@@ -216,7 +216,6 @@ public sealed partial class URemoteView
     private void ShowPage(int index)
     {
         if (pages.Length == 0) return;
-        if (index == 3 && Bounds.Width < 850) index = 1;
         page.Content = pages[index];
         for (var i = 0; i < navigation.Count; i++)
         {

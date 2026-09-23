@@ -40,10 +40,11 @@ public static class HostClipboardProtocol
     public static IEnumerable<(string Channel, byte[] Data)> ReadResponse(ClipboardRequest request, string? text)
     {
         var success = text is not null && request.Format is 1 or 13;
-        // UU transports text as UTF-8, including logical CF_UNICODETEXT (13).
-        // The format identifier is not the byte encoding of the wire payload.
-        var bytes = success ? Encoding.UTF8.GetBytes(text!) : [];
-        if (bytes.Length > MaxTextBytes) { success = false; bytes = []; }
+        // V4 blocks carry the requested native format. The V3 protobuf string above
+        // is UTF-8, but Windows CF_UNICODETEXT is null-terminated UTF-16LE.
+        var bytes = success ? request.Format == 13
+            ? new UnicodeEncoding(false, false, true).GetBytes(text! + '\0') : Encoding.UTF8.GetBytes(text!) : [];
+        if (bytes.Length > MaxTextBytes) { success = false; Array.Clear(bytes); bytes = []; }
         try
         {
             var count = (bytes.Length + 32767) / 32768;
@@ -54,6 +55,15 @@ public static class HostClipboardProtocol
                     Join(Blob(1, Encoding.UTF8.GetBytes(request.BlockKey)), Int(2, (ulong)i + 1), Blob(3, bytes.AsSpan(i * 32768, Math.Min(32768, bytes.Length - i * 32768)).ToArray())))));
         }
         finally { Array.Clear(bytes); }
+    }
+    public static string DecodeTextData(int format, byte[] bytes)
+    {
+        if (bytes.Length > MaxTextBytes) throw new FormatException("Clipboard data exceeds limit.");
+        var text = (format == 13 ? new UnicodeEncoding(false, false, true).GetString(bytes)
+            : new UTF8Encoding(false, true).GetString(bytes)).TrimEnd('\0');
+        if (text.Contains('\0') || Encoding.UTF8.GetByteCount(text) > MaxTextBytes)
+            throw new FormatException("Clipboard text rejected.");
+        return text;
     }
     private static byte[] Envelope(ulong id, bool response, uint tag, byte[] body) => Join(Int(1, id), Int(2, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
         Blob(response ? 22u : 21u, Join(Blob(1, Int(1, id)), Blob(tag, body))));
@@ -74,12 +84,17 @@ public static class HostClipboardTransfers
         var rpcBytes = root.Bytes(response ? 22 : 21); if (rpcBytes is null) return null;
         var rpc = ProtoFields.Read(rpcBytes.Value); if (rpc.Bytes(1) is not { } head) return null;
         var id = ProtoFields.Read(head).Items.FirstOrDefault(x => x.Tag == 1 && x.WireType == 0)?.Value ?? 0;
+        if (response && rpc.Bytes(6) is { } changed)
+            return new("text-ack", id, "", 0, 0, ProtoFields.Read(changed).Int(1), []);
         if (rpc.Bytes(response ? 5 : 9) is not { } clipBytes) return null;
         var clip = ProtoFields.Read(clipBytes);
+        if (response && clip.Bytes(1) is not null) return new("formats-ack", id, "", 0, 0, 1, []);
         if (!response && clip.Bytes(1) is { } list)
         {
             var formats = ProtoFields.Read(list, [1]).Repeated(1).Select(x => ProtoFields.Read(x)).ToArray();
-            var format = formats.Any(f => f.Int(1) == 13) ? 13 : formats.Any(f => f.Int(1) == 1 || f.Text(2) == "public.utf8-plain-text") ? 1 : -1;
+            var format = formats.Any(f => f.Int(1) == 13) ? 13
+                : formats.Any(f => f.Text(2) == "public.utf8-plain-text") ? 0
+                : formats.Any(f => f.Int(1) == 1) ? 1 : -1;
             return new("formats", id, "", 0, 0, 0, [], format);
         }
         if (response && clip.Bytes(2) is { } confirm)
@@ -89,10 +104,11 @@ public static class HostClipboardTransfers
         return null;
     }
     public static byte[] Advertise(ulong id) => Envelope(id, false, 1, Join(
-        Blob(1, Join(Int(1, 13), Blob(2, Encoding.UTF8.GetBytes("CF_UNICODETEXT")))),
+        Blob(1, Int(1, 13)),
         Blob(1, Blob(2, Encoding.UTF8.GetBytes("public.utf8-plain-text")))));
     public static byte[] AcknowledgeFormats(ulong id) => Envelope(id, true, 1, []);
-    public static byte[] Ask(ulong id, string key, int format) => Envelope(id, false, 2, Join(Int(1, (ulong)format), Blob(2, Encoding.UTF8.GetBytes(key))));
+    public static byte[] Ask(ulong id, string key, int format) => Envelope(id, false, 2, Join(Int(1, (ulong)format), Blob(2, Encoding.UTF8.GetBytes(key)),
+        format == 0 ? Blob(3, Encoding.UTF8.GetBytes("public.utf8-plain-text")) : []));
     public static byte[] AcknowledgeBlock(ClipboardTransfer block, bool success) => Envelope(block.Id, true, 3,
         Join(Blob(1, Encoding.UTF8.GetBytes(block.Key)), Int(2, (ulong)block.BlockId), Int(3, success ? 1u : 2u)));
     private static byte[] Envelope(ulong id, bool response, uint tag, byte[] body) => Join(Int(1, id), Int(2, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()),

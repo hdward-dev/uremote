@@ -39,9 +39,48 @@ static class HostApiTests
         using var refreshApi = new UuMacHostApi(loginApi.State, refreshHandler);
         await refreshApi.RefreshDeviceProfileAsync(profile);
         check(refreshApi.State == loginApi.State, "device metadata refresh retains account token and device identity");
+        using var assistanceHandler = new AssistanceHandler();
+        using var assistanceApi = new UuMacHostApi(loginApi.State, assistanceHandler);
+        var device = loginApi.State.DeviceId;
+        HostAssistance.SetEnabled(device, true);
+        foreach (var displayCustom in new[] { false, true })
+        {
+            HostAssistance.Configure(device, "Fixture123", displayCustom);
+            await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+            check(assistanceHandler.Allowed && assistanceHandler.Primary == HostAssistance.Sign("fixture-salt", HostAssistance.Code(device))
+                && assistanceHandler.Backup == HostAssistance.Sign("fixture-salt", "Fixture123"), "both codes are submitted regardless of displayed mode");
+        }
+        var oldTemporarySign = assistanceHandler.Primary;
+        HostAssistance.RotateAfterConnection(device);
+        await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+        check(assistanceHandler.Primary != oldTemporarySign && assistanceHandler.Backup == HostAssistance.Sign("fixture-salt", "Fixture123"), "successful connection rotates only temporary signature");
+        HostAssistance.SetEnabled(device, false);
+        await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+        check(!assistanceHandler.Allowed && assistanceHandler.Primary == "" && assistanceHandler.Backup == "", "disabling assistance withholds both signatures");
+        HostAssistance.SetEnabled(device, true);
+        HostAssistance.Configure(device, "", false);
+        await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+        check(assistanceHandler.Allowed && assistanceHandler.Primary.Length == 64 && assistanceHandler.Backup == "", "clearing custom code leaves only temporary authentication");
         using var uninitialized = new UuMacHostApi(new(ClientId: "fixture-client"), loginHandler);
         try { await uninitialized.SendLoginCodeAsync("15500000000"); check(false, "SMS requires host initialization"); }
         catch (InvalidOperationException) { check(loginHandler.Requests == 2, "SMS requires host initialization"); }
+    }
+
+    private sealed class AssistanceHandler : HttpMessageHandler
+    {
+        public bool Allowed;
+        public string Primary = "", Backup = "";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/api/v2/room/share/upload_sign")
+                throw new Exception("Unexpected assistance request.");
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            var value = body.RootElement;
+            Allowed = value.GetProperty("can_remote_control").GetBoolean();
+            Primary = value.GetProperty("sign").GetString()!;
+            Backup = value.GetProperty("backup_sign").GetString()!;
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"code\":0,\"data\":{}}") };
+        }
     }
 
     private sealed class HostAvailabilityHandler : HttpMessageHandler

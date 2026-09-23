@@ -19,7 +19,7 @@ public sealed class UuControllerApi : IDisposable
     public UuControllerApi(LoginState? state = null, HttpMessageHandler? handler = null)
     {
         State = state ?? new(ClientId: "u-remote-" + Guid.NewGuid().ToString("N")[..16], Uuid: Guid.NewGuid().ToString());
-        http = new(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false })
+        http = new(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
         {
             BaseAddress = new("https://api.nrd.nie.163.com"), Timeout = TimeSpan.FromSeconds(25)
         };

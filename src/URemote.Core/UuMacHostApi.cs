@@ -34,7 +34,7 @@ public sealed class UuMacHostApi : IDisposable
     public UuMacHostApi(LoginState state, HttpMessageHandler? handler = null)
     {
         State = state;
-        http = new(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(25) };
+        http = new(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false }) { Timeout = TimeSpan.FromSeconds(25) };
     }
 
     public async Task InitializeAsync(HostDeviceProfile profile, CancellationToken ct = default)
@@ -77,6 +77,28 @@ public sealed class UuMacHostApi : IDisposable
         return UuMacHostProtocol.ParseRoomResponse(response.RootElement.GetRawText());
     }
 
+    public async Task<AssistanceRoom> JoinAssistanceAsync(string connectId, string connectCode, CancellationToken ct = default)
+    {
+        AssistanceRequest.Validate(connectId, connectCode);
+        if (!State.IsAuthenticated) throw new InvalidOperationException("Login required.");
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v2/room/join/share/by_code",
+            JsonSerializer.Serialize(new { connect_id = connectId, connect_code = connectCode }));
+        using var response = await SendAsync(request, ct);
+        try { return AssistanceRoom.Parse(response.RootElement); }
+        catch
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await CancelAssistanceAsync(connectId, deadline.Token); } catch { }
+            throw;
+        }
+    }
+    public async Task CancelAssistanceAsync(string connectId, CancellationToken ct = default)
+    {
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v2/room/share/cancel_remote_assist",
+            JsonSerializer.Serialize(new { connect_id = connectId }));
+        using var response = await SendAsync(request, ct);
+    }
+
     public async Task LeaveDeviceAsync(string id, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
@@ -97,10 +119,10 @@ public sealed class UuMacHostApi : IDisposable
     public async Task AnswerAssistanceAsync(string controlId, string salt, CancellationToken ct)
     {
         if (controlId.Length is < 1 or > 256 || salt.Length is < 1 or > 1024) throw new ArgumentException("Invalid challenge.");
-        var allowed = HostAssistance.IsEnabled(State.DeviceId);
+        var signatures = HostAssistance.Signatures(State.DeviceId, salt);
         using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v2/room/share/upload_sign",
-            JsonSerializer.Serialize(new { can_remote_control = allowed, control_id = controlId,
-                sign = allowed ? HostAssistance.Sign(salt, HostAssistance.Code(State.DeviceId)) : "", backup_sign = "" }));
+            JsonSerializer.Serialize(new { can_remote_control = signatures.Allowed, control_id = controlId,
+                sign = signatures.Primary, backup_sign = signatures.Backup }));
         using var response = await SendAsync(request, ct);
     }
 

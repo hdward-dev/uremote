@@ -13,3 +13,5 @@ jobs:
       - run: dotnet restore URemote.slnx
       - run: dotnet build URemote.slnx -c Release --no-restore -m:1
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
+      - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
+      - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check

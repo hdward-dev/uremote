@@ -17,6 +17,10 @@ void Reject(Action action, string label)
     { Check(true, label); return; }
     throw new Exception("FAIL: " + label);
 }
+var bundle = new BundledIceCandidates("v=0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:1\r\n");
+var bundledCandidate = new JsonObject { ["candidate"] = "fixture", ["sdpMLineIndex"] = 1, ["sdpMid"] = "1" };
+Check(bundle.Normalize(bundledCandidate)["sdpMLineIndex"]!.GetValue<int>() == 0 && bundledCandidate["sdpMLineIndex"]!.GetValue<int>() == 1, "bundled candidates map to shared transport without mutating signal data");
+Check(new BundledIceCandidates("m=video 9 UDP/TLS/RTP/SAVPF 98\na=mid:0\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\na=mid:1").Normalize(bundledCandidate)["sdpMLineIndex"]!.GetValue<int>() == 1, "nonbundled transport is never remapped");
 using (var previews = System.Text.Json.JsonDocument.Parse("""
 {"data":{"desktop_devices":[{"device_id":"a","wallpaper_url":"https://example.com/preview.png?signature=abc"},{"device_id":"b","wallpaper_url":"file:///etc/passwd"},{"device_id":"c","wallpaper_url":"https://user:secret@example.com/image"},{"device_id":"d"}]}}
 """))
@@ -46,6 +50,37 @@ Check(allowedToken.IsCancellationRequested && !HostAssistance.IsEnabled("fixture
 Check(HostAssistance.Code("fixture-local") != temporary, "disabling assistance invalidates the previous temporary code");
 HostAssistance.SetEnabled("fixture-local", true);
 Check(HostAssistance.IsEnabled("fixture-local") && allowedToken.IsCancellationRequested, "reenabling assistance gives a fresh permission without reviving old sessions");
+// Synthetic secrets only; no real account or network is used here.
+HostAssistance.Configure("fixture-custom", "Fixture123", true);
+Check(HostAssistance.DisplayCode("fixture-custom") == "Fixture123" && HostAssistance.RotateAfterConnection("fixture-custom") && HostAssistance.DisplayCode("fixture-custom") == "Fixture123", "custom code survives a successful assistance connection");
+HostAssistance.Configure("fixture-custom", "Fixture123", false);
+var beforeRotation = HostAssistance.DisplayCode("fixture-custom");
+Check(HostAssistance.RotateAfterConnection("fixture-custom") && HostAssistance.DisplayCode("fixture-custom") != beforeRotation, "temporary mode rotates on successful connection");
+HostAssistance.Configure("fixture-custom", "Fixture123", true);
+Check(HostAssistance.DisplayCode("fixture-custom") == "Fixture123", "switching modes preserves the custom code");
+foreach (var invalid in new[] { "short1", "onlyletters", "123456789", "Space 123", "中文测试12345", new string('a', 33) + "1" })
+    Reject(() => HostAssistance.ValidateCustomCode(invalid), "invalid custom code rejected");
+var secretDir = Path.Combine(Path.GetTempPath(), "uremote-code-check-" + Guid.NewGuid().ToString("N"));
+var secretPath = Path.Combine(secretDir, "secret.json");
+try
+{
+    var saved = new AssistanceCodeSettings("fixture-custom", "Fixture123", true);
+    saved.Save(secretPath);
+    Check(AssistanceCodeSettings.Load(secretPath, "fixture-custom") == saved, "custom code persists across reload");
+    Check(!saved.ToString().Contains("Fixture123"), "custom code is redacted from diagnostics");
+    Check(!AssistanceCodeSettings.Load(secretPath, "other-device").UseCustom, "custom code is bound to its device");
+    if (OperatingSystem.IsLinux())
+    {
+        Check(File.GetUnixFileMode(secretPath) == (UnixFileMode.UserRead | UnixFileMode.UserWrite), "secret file is created with owner-only permissions");
+        File.SetUnixFileMode(secretPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherRead);
+        var rejected = false;
+        try { AssistanceCodeSettings.Load(secretPath, "fixture-custom"); } catch (IOException) { rejected = true; }
+        Check(rejected, "publicly readable custom code file is rejected");
+    }
+    new AssistanceCodeSettings("fixture-custom", "", false).Save(secretPath);
+    Check(AssistanceCodeSettings.Load(secretPath, "fixture-custom").CustomCode == "", "clearing custom code persists");
+}
+finally { Directory.Delete(secretDir, true); }
 var controllerOptions = StreamerConnectOptions.Decode(ControllerProtocol.ConnectOptions("fixture-controller"));
 Check(controllerOptions.CaptureType == 1 && controllerOptions.ClientType == 4 && controllerOptions.DeviceId == "fixture-controller"
     && controllerOptions.DecoderCapabilities.Single().CodecType == 1, "native controller H264 capabilities and Mac identity wire options");
@@ -93,6 +128,19 @@ const string roomFixture = """
 "report_token":"fixture-report-secret","report_url":"https://report.example.test/",
 "report_server_address":"192.0.2.1","streamer_retry_delta_ms":1000,"international_connect":false}}
 """;
+var assistFixture = JsonNode.Parse(roomFixture)!;
+assistFixture["data"]!["publisher_platform"] = 4;
+using (var doc = System.Text.Json.JsonDocument.Parse(assistFixture.ToJsonString()))
+    Check(AssistanceRoom.Parse(doc.RootElement).Platform == 4, "assistance parses target platform with direct room configuration");
+var nestedAssist = new JsonObject { ["code"] = 0, ["data"] = new JsonObject { ["publisher_platform"] = "1", ["room_config"] = JsonNode.Parse(roomFixture)!["data"]!.DeepClone() } };
+using (var doc = System.Text.Json.JsonDocument.Parse(nestedAssist.ToJsonString()))
+    Check(AssistanceRoom.Parse(doc.RootElement).Platform == 1, "assistance parses nested room and string platform");
+var assistRequest = new AssistanceRequest("123456789", "Fixture123");
+Check(!assistRequest.ToString().Contains("Fixture123") && assistRequest.TakeCode() == "Fixture123" && assistRequest.TakeCode() == "", "assistance credential is redacted and consumed once");
+Reject(() => AssistanceRequest.Validate("not-an-id", "Fixture123"), "invalid partner id rejected");
+Reject(() => AssistanceRequest.Validate("123456789", ""), "empty partner code rejected");
+Check(StreamerConnectOptions.Decode(ControllerProtocol.ConnectOptions("fixture", assistance: true)).ControlConnectType == 2, "assistance connection is explicitly marked as assistance");
+await AssistanceJoinTests.Run(Check, assistFixture.ToJsonString());
 var room = UuMacHostProtocol.ParseRoomResponse(roomFixture);
 Check(room.SignalingList.Count == 2 && room.WebSocketConnectTimeoutMs == 5000
     && room.Token == "fixture-room-secret", "observed room configuration schema parses synthetic data");

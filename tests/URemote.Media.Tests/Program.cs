@@ -5,6 +5,28 @@ using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 using URemote.Media;
 
+if(args.Contains("--candidate-signaling-check")) { await CandidateSignalingChecks.RunAsync(); return; }
+if(args.Contains("--clipboard-check")) { await ClipboardChecks.RunAsync(); return; }
+
+if(args.Contains("--desktop-offer-check")) {
+ using var media = new ControllerMediaPeer();
+ var desktopOffer = await media.OfferAsync();
+ var sections = desktopOffer.Split("m=").Skip(1).ToArray();
+ if(!sections[0].StartsWith("audio ") || !sections[0].Contains("a=recvonly") || sections.Length != 7 || sections.Any(x=>x.Contains("a=inactive"))) throw new Exception("Desktop media negotiation does not match official active audio/video bundle");
+ Console.WriteLine("PASS: desktop offer starts with active receiving audio and five video tracks");return;
+}
+
+if(args.Contains("--direct-network-check")) {
+ var network = DirectMediaNetwork.FromEnvironment() ?? throw new Exception("Missing test interface");
+ using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
+ network.Bind(socket);
+ var bytes = new byte[32]; socket.GetRawSocketOption(1,25,bytes);
+ if(System.Text.Encoding.ASCII.GetString(bytes).TrimEnd('\0') != network.Interface) throw new Exception("Interface binding not applied");
+ using var media = new ControllerMediaPeer(dataOnly:true);
+ await media.OfferAsync();
+ Console.WriteLine("PASS: physical interface socket binding and controller offer"); return;
+}
+
 if(args.Contains("--controller-files-only")) { await ControllerFileChecks.RunAsync(); return; }
 
 if(args.Contains("--assistance-probe")) {
