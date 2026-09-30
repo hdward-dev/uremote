@@ -3,7 +3,7 @@ using URemote.Core;
 
 namespace URemote.Linux;
 
-public sealed class WaylandVirtualKeyboard : IAsyncDisposable
+public sealed class WaylandVirtualKeyboard : IDesktopKeyboard
 {
     private readonly WaylandConnection connection;
     private readonly uint keyboard;

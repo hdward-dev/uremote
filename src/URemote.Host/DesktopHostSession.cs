@@ -4,7 +4,7 @@ using URemote.Linux;
 
 namespace URemote.Host;
 
-public sealed record SavedHostIdentity(LoginState State, HostDeviceProfile Profile, string Status, int Platform = 0)
+public sealed record SavedHostIdentity(LoginState State, HostDeviceProfile Profile, string Status, int Platform = 0, string LoginAccount = "")
 {
     public override string ToString() => "SavedHostIdentity(redacted)";
 }
@@ -37,6 +37,9 @@ public static class DesktopHostSession
             throw new InvalidOperationException("当前保存的是旧平台身份，请先迁移并重新登录 Windows 设备身份；旧令牌不会自动转换。");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (duration != Timeout.InfiniteTimeSpan) deadline.CancelAfter(duration);
+        report("desktop-authorizing");
+        await using var desktop = await DesktopBackend.OpenAsync(enableInput, deadline.Token);
+        report("desktop-ready");
         using var api = new UuMacHostApi(identity.State);
         await using var terminals = new HostTerminalManager();
         using var wallpaperStop=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
@@ -59,7 +62,7 @@ public static class DesktopHostSession
                 report("device-profile-refreshed");
                 profileUpdated = true;
             }
-            var globals = await WaylandCapabilities.DiscoverAsync(deadline.Token);
+            var globals = await DesktopBackend.DiscoverAsync(deadline.Token);
             var available = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
             var selected = outputIndices is null
                 ? (outputs.Count == 0 ? available : outputs.Where(available.Contains).ToArray())
@@ -104,6 +107,7 @@ public static class DesktopHostSession
             wallpaperStop.Cancel();
             try {await wallpaper;}catch(OperationCanceledException){}
             await terminals.DisposeAsync();
+            await desktop.DisposeAsync();
             if (restore)
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -120,7 +124,7 @@ public static class DesktopHostSession
             while (!stop.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(3), stop.Token);
-                var globals = await WaylandCapabilities.DiscoverAsync(stop.Token);
+                var globals = await DesktopBackend.DiscoverAsync(stop.Token);
                 var current = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5);
                 if (!initial.SequenceEqual(current))
                 {
@@ -131,6 +135,7 @@ public static class DesktopHostSession
             }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (DesktopSessionClosedException) { report("desktop-session-closed"); stop.Cancel(); throw; }
         catch (Exception e) { report("display-watch-retry;type=" + e.GetType().Name); stop.Cancel(); }
     }
 

@@ -64,7 +64,8 @@ try
         var restoreControlOff = false;
         try
         {
-            var globals = await WaylandCapabilities.DiscoverAsync(deadline.Token);
+            await using var desktop = await DesktopBackend.OpenAsync(args[0] == "--host-control", deadline.Token);
+            var globals = await DesktopBackend.DiscoverAsync(deadline.Token);
             var outputs = args[3] == "all" ? globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().ToArray()
                 : new[] { uint.Parse(args[3]) };
             if (outputs.Length is < 1 or > 5 || outputs.Any(output => !globals.Any(g => g.Interface == "wl_output" && g.Name == output)))

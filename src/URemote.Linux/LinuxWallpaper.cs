@@ -12,10 +12,19 @@ public static class LinuxWallpaper
         home??=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var stateRoot=Environment.GetEnvironmentVariable("XDG_STATE_HOME")??Path.Combine(home,".local/state");
         var configRoot=Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")??Path.Combine(home,".config");
-        var session=Read(Path.Combine(stateRoot,"DankMaterialShell/session.json"));
-        var settings=Read(Path.Combine(configRoot,"DankMaterialShell/settings.json"));
+        JsonObject? session=null;
+        JsonObject? settings=null;
         var source=Environment.GetEnvironmentVariable("UREMOTE_WALLPAPER");
+        if (string.IsNullOrEmpty(source) && DesktopEnvironmentInfo.Current.Name == "KDE Plasma")
+        {
+            var dataRoots = new[] { Environment.GetEnvironmentVariable("XDG_DATA_HOME") ?? Path.Combine(home,".local/share") }
+                .Concat((Environment.GetEnvironmentVariable("XDG_DATA_DIRS") ?? "/usr/local/share:/usr/share").Split(':', StringSplitOptions.RemoveEmptyEntries)).ToArray();
+            source = KdeWallpaper.Resolve(configRoot, dataRoots);
+            if (source is null) return null;
+        }
         if(string.IsNullOrEmpty(source)) {
+            session=Read(Path.Combine(stateRoot,"DankMaterialShell/session.json"));
+            settings=Read(Path.Combine(configRoot,"DankMaterialShell/settings.json"));
             if(session is null)return null;
             var light=session["isLightMode"]?.GetValue<bool>()??false;
             source=session["wallpaperPath"]?.GetValue<string>()??"";
@@ -27,6 +36,8 @@ public static class LinuxWallpaper
         var scratch=Path.Combine(Path.GetTempPath(),"uremote-wallpaper-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(scratch);
         try {
             if(source.Length==0 || source.StartsWith('#')) {
+                session ??= Read(Path.Combine(stateRoot,"DankMaterialShell/session.json")) ?? new();
+                settings ??= Read(Path.Combine(configRoot,"DankMaterialShell/settings.json"));
                 shell??=FindShell();if(shell is null)return null;
                 var svg=CreateBackdrop(session!,settings??new(),shell,source);
                 var input=Path.Combine(scratch,"wallpaper.svg");var output=Path.Combine(scratch,"wallpaper.png");

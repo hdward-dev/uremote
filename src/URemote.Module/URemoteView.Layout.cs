@@ -19,6 +19,23 @@ public sealed partial class URemoteView
     private readonly TextBlock catalogHint = new() { Text = "登录后，同步你的 UU 账号设备", TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock transferState = new() { Text = "接收和取出仅限此文件夹", TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock accountState = new() { Text = "正在读取账号状态" };
+    private readonly SelectableTextBlock accountIdentity = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false };
+    private readonly TextBlock accountHeading = new() { FontSize = 16, FontWeight = FontWeight.SemiBold };
+    private readonly TextBlock accountDescription = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock logoutHint = new() { Text = "退出登录会停止本机被控，并断开本应用的远程连接。", FontSize = 12, TextWrapping = TextWrapping.Wrap, IsVisible = false };
+    private void UpdateAccountDisplay(SavedHostIdentity? saved)
+    {
+        var authenticated = saved?.State.IsAuthenticated == true;
+        accountState.Text = authenticated ? "●  已登录" : "○  尚未登录";
+        ApplyTheme(accountState, TextBlock.ForegroundProperty, authenticated ? "AppPositiveBrush" : "AppMutedBrush");
+        accountHeading.Text = authenticated ? "当前登录账号" : "登录 UU 账号";
+        accountDescription.Text = authenticated ? "使用同一 UU 账号，即可连接你的其他设备。" : "登录后同步设备，并开启本机远程控制。";
+        accountIdentity.Text = authenticated ? string.IsNullOrEmpty(saved!.LoginAccount)
+            ? "UU 账号 ID：" + saved.State.UserId : "UU 账号：" + saved.LoginAccount : "";
+        accountIdentity.IsVisible = authenticated;
+        logoutHint.IsVisible = authenticated;
+        logout.IsVisible = authenticated; loginPanel.IsVisible = !authenticated;
+    }
     private readonly TextBlock catalogCount = new() { Text = "我的设备", FontSize = 22, FontWeight = FontWeight.SemiBold };
     private readonly TextBox search = new() { PlaceholderText = "搜索设备名称、平台或编号", MinWidth = 160 };
     private readonly ComboBox filter = new() { ItemsSource = new[] { "全部设备", "在线设备", "我的收藏", "电脑", "移动设备" }, SelectedIndex = 0, Width = 130 };
@@ -120,17 +137,17 @@ public sealed partial class URemoteView
             Card(new StackPanel { Spacing = 9, Children = {
                 Text("连接与退出", 16), Text("主控退出后，本机继续等待连接。终端会话会保留，方便再次进入。", 13, true),
                 Text("本机关闭被控开关，或退出 AsterDock，将结束共享与终端会话。修改共享权限前，请先关闭被控开关。", 13, true) } }) } };
-        loginPanel.Children.Add(Text("登录 UU 账号", 18)); loginPanel.Children.Add(Text("使用与你其他设备相同的账号。", 13, true));
+        loginPanel.MaxWidth = 440; loginPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        loginPanel.Children.Add(Text("手机号", 13));
         var phoneRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 10 }; phoneRow.Children.Add(mobile); Grid.SetColumn(sendCode, 1); phoneRow.Children.Add(sendCode);
-        loginPanel.Children.Add(phoneRow); loginPanel.Children.Add(code); loginPanel.Children.Add(completeLogin);
+        loginPanel.Children.Add(phoneRow); loginPanel.Children.Add(Text("短信验证码", 13)); loginPanel.Children.Add(code); loginPanel.Children.Add(completeLogin);
+        completeLogin.HorizontalAlignment = HorizontalAlignment.Stretch;
+        ApplyTheme(completeLogin, Button.BackgroundProperty, "AppAccentBrush"); completeLogin.Foreground = Brushes.White;
+        loginPanel.Children.Add(Text("验证码仅用于本次登录。点击“发送验证码”后才会发送短信。", 12, true));
         advancedSettings.Children.Add(Text("本机登录文件", 13, true)); advancedSettings.Children.Add(identity);
         advancedSettings.Children.Add(Text("视频编码器", 13, true)); advancedSettings.Children.Add(encoder);
         advancedSettings.Children.Add(Text("路径在下次启动被控时保存。正常使用无需修改。", 12, true));
-        var accountPage = new StackPanel { Spacing = 16, Children = { Text("账号与设置", 22),
-            Card(new StackPanel { Spacing = 12, Children = { Text("UU 账号", 16), accountState, loginPanel } }),
-            Card(new Expander { Header = "高级设置", HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = advancedSettings }),
-            Card(new StackPanel { Spacing = 8, Children = { Text("功能状态", 16), Text("已实测：双屏桌面、键鼠控制、退出后重连、远程终端命令执行。", 13, true),
-                Text("待验证：双向文本剪贴板、系统声音和画质切换效果。", 13, true) } }) } };
+        var accountPage = BuildAccountPage();
         var assistancePage = BuildConnectAssistancePage();
         pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }];
         var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 8) };
@@ -155,7 +172,7 @@ public sealed partial class URemoteView
         var rightBorder = new Border { Padding = new Thickness(20), BorderThickness = new Thickness(1, 0, 0, 0), Child = new ScrollViewer { Content = right, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
         ApplyTheme(rightBorder, Border.BorderBrushProperty, "AppBorderBrush"); ApplyTheme(rightBorder, Border.BackgroundProperty, "AppSurfaceBrush");
         body.Children.Add(leftBorder); Grid.SetColumn(scroll, 1); body.Children.Add(scroll); Grid.SetColumn(rightBorder, 2); body.Children.Add(rightBorder);
-        var footer = new Border { Padding = new Thickness(18, 8), BorderThickness = new Thickness(0, 1, 0, 0), Child = Text("U远程 · 星栈远程控制插件", 11, true) };
+        var footer = new Border { Padding = new Thickness(18, 8), BorderThickness = new Thickness(0, 1, 0, 0), Child = Text($"U远程 · 星栈远程控制插件  |  桌面环境：{DesktopEnvironmentInfo.Current.DisplayName}", 11, true) };
         ApplyTheme(footer, Border.BorderBrushProperty, "AppBorderBrush"); Grid.SetRow(footer, 1); Grid.SetColumnSpan(footer, 3); body.Children.Add(footer);
         Content = body;
         SizeChanged += (_, e) =>
@@ -177,9 +194,8 @@ public sealed partial class URemoteView
             if (columns != deviceColumns) { deviceColumns = columns; RenderDevices(); }
         };
         ShowPage(0); RenderDevices();
-        try { accountState.Text = DesktopHostSession.ReadIdentity(identity.Text ?? "").State.IsAuthenticated ? "已登录 · 与 UU 账号同步" : "尚未登录"; }
-        catch { accountState.Text = "尚未登录"; }
-        loginPanel.IsVisible = accountState.Text == "尚未登录";
+        try { UpdateAccountDisplay(DesktopHostSession.ReadIdentity(identity.Text ?? "")); }
+        catch { UpdateAccountDisplay(null); }
         deviceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
         deviceTimer.Tick += async (_, _) => { if (IsVisible && page.Content == pages[0] && Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") await RefreshDevicesAsync(); };
         deviceTimer.Start();
@@ -237,16 +253,18 @@ public sealed partial class URemoteView
     }
     private async Task RefreshDevicesAsync()
     {
-        if (disposed || refreshing) return;
+        if (disposed || loggingOut || refreshing) return;
+        var generation = accountGeneration;
         refreshing = true; refresh.IsEnabled = false; refresh.Content = "正在同步…";
         try
         {
-            var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
+            var saved = DesktopHostSession.ReadIdentity(identity.Text ?? "");
+            var state = saved.State;
             if (!state.IsAuthenticated) throw new InvalidOperationException();
             using var api = new UuMacHostApi(state);
             var loaded = await api.GetDevicesAsync(lifetime.Token);
-            if (disposed) return;
-            devices = loaded; Console.WriteLine("device-catalog-loaded;count=" + devices.Count); accountState.Text = "已登录 · 与 UU 账号同步";
+            if (disposed || loggingOut || generation != accountGeneration) return;
+            devices = loaded; Console.WriteLine("device-catalog-loaded;count=" + devices.Count); UpdateAccountDisplay(saved);
             catalogHint.Text = $"{devices.Count} 台设备 · {devices.Count(x => x.Online)} 台在线 · 更新于 {DateTime.Now:HH:mm:ss}";
             if (selectedDeviceId is { } selected && devices.FirstOrDefault(x => x.Id == selected) is { } updated) ShowDevice(updated);
             else { selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false; }
@@ -256,7 +274,7 @@ public sealed partial class URemoteView
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch
         {
-            if (!disposed) catalogHint.Text = devices.Count > 0 ? "刷新失败，保留上次设备列表。请检查网络后重试。" : "暂时无法获取设备，请在“账号与设置”检查登录状态，或点击刷新重试。";
+            if (!disposed && !loggingOut && generation == accountGeneration) catalogHint.Text = devices.Count > 0 ? "刷新失败，保留上次设备列表。请检查网络后重试。" : "暂时无法获取设备，请在“账号与设置”检查登录状态，或点击刷新重试。";
         }
         finally { refreshing = false; if (!disposed) { refresh.IsEnabled = true; refresh.Content = "刷新"; } }
     }

@@ -19,18 +19,62 @@ public sealed partial class URemoteView
     private readonly Dictionary<int, TextBlock> localScreenLabels = [];
     private readonly Dictionary<int, string> localScreenFps = [];
     private bool loadingScreens;
+    private async Task RefreshAuthorizedScreensAsync()
+    {
+        try
+        {
+            var globals = await DesktopBackend.DiscoverAsync(lifetime.Token);
+            if (disposed) return;
+            var current = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
+            if (!outputs.Select(o => o.Id).SequenceEqual(current))
+            {
+                outputs.Clear(); screens.Children.Clear();
+                foreach (var id in current)
+                {
+                    var check = new CheckBox { Content = "显示屏 " + (outputs.Count + 1), IsChecked = true, Margin = new Thickness(0, 0, 16, 8) };
+                    outputs.Add((id, check)); screens.Children.Add(check);
+                }
+            }
+            await RefreshLocalScreensAsync();
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch { if (!disposed) detail.Text = "无法读取已授权的显示器，请重新开启被控。"; }
+    }
     private readonly Dictionary<string, Bitmap> previewCache = [];
+    private DateTimeOffset localWallpaperChecked;
     private readonly HttpClient previewHttp = new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(12) };
 
     private async Task RefreshPreviewsAsync()
     {
+        if (loggingOut) return;
+        var generation = accountGeneration;
         var activeUrls = devices.Select(d => d.WallpaperUrl).ToHashSet();
+        const string localWallpaperKey = "local-wallpaper";
+        if (devices.Any(d => d.IsCurrent)) activeUrls.Add(localWallpaperKey);
         foreach (var old in previewCache.Keys.Where(k => !activeUrls.Contains(k)).ToArray())
         { previewCache[old].Dispose(); previewCache.Remove(old); }
+        if (devices.Any(d => d.IsCurrent) && DateTimeOffset.UtcNow - localWallpaperChecked > TimeSpan.FromSeconds(30))
+        {
+            localWallpaperChecked = DateTimeOffset.UtcNow;
+            try
+            {
+                var png = await LinuxWallpaper.RenderAsync(encoder.Text ?? "", lifetime.Token);
+                if (png is not null && !disposed && !loggingOut && generation == accountGeneration)
+                {
+                    using var stream = new MemoryStream(png);
+                    var bitmap = Bitmap.DecodeToWidth(stream, 800);
+                    if (previewCache.Remove(localWallpaperKey, out var old)) old.Dispose();
+                    previewCache[localWallpaperKey] = bitmap;
+                    RenderDevices();
+                }
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
+            catch { /* Wallpaper availability must not affect the device list. */ }
+        }
         // No login headers or identity values are sent to image hosts. Keep previews in memory only.
         foreach (var url in devices.Select(d => d.WallpaperUrl).Where(u => u.Length > 0).Distinct().Take(32))
         {
-            if (disposed || previewCache.Count >= 32) break;
+            if (disposed || loggingOut || generation != accountGeneration || previewCache.Count >= 32) break;
             if (previewCache.ContainsKey(url)) continue;
             try
             {
@@ -46,7 +90,7 @@ public sealed partial class URemoteView
                 }
                 bytes.Position = 0;
                 var bitmap = Bitmap.DecodeToWidth(bytes, 800);
-                if (disposed) { bitmap.Dispose(); return; }
+                if (disposed || loggingOut || generation != accountGeneration) { bitmap.Dispose(); return; }
                 previewCache.Add(url, bitmap);
                 RenderDevices();
             }
@@ -76,7 +120,7 @@ public sealed partial class URemoteView
                 CapturedScreen? frame = null;
                 try
                 {
-                    frame = await WaylandScreenCapture.CaptureAsync(id, false, lifetime.Token);
+                    frame = await DesktopBackend.CaptureAsync(id, false, lifetime.Token);
                     if (disposed) return;
                     if (frame.ShmFormat is not (0 or 1)) continue;
                     var bitmap = new WriteableBitmap(new PixelSize(224, 126), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
@@ -126,7 +170,7 @@ public sealed partial class URemoteView
     {
         var visual = new Grid { Height = listView ? 120 : 190, ClipToBounds = true };
         ApplyTheme(visual, Panel.BackgroundProperty, "AppSubtleBrush");
-        if (previewCache.TryGetValue(device.WallpaperUrl, out var bitmap))
+        if (previewCache.TryGetValue(device.IsCurrent && previewCache.ContainsKey("local-wallpaper") ? "local-wallpaper" : device.WallpaperUrl, out var bitmap))
             visual.Children.Add(new Image { Source = bitmap, Stretch = Stretch.UniformToFill, Opacity = device.Online ? 1 : .5 });
         else
             visual.Children.Add(new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,

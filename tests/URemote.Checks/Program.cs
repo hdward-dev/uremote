@@ -4,6 +4,79 @@ using URemote.Linux;
 using System.Diagnostics;
 using System.Text;
 
+if (args.Contains("--desktop-environment"))
+{
+    static DesktopEnvironmentInfo Detect(params (string Key, string Value)[] values)
+        => DesktopEnvironmentInfo.Detect(key => values.FirstOrDefault(v => v.Key == key).Value);
+    var cases = new[]
+    {
+        (Detect(("XDG_CURRENT_DESKTOP", "KDE"), ("XDG_SESSION_TYPE", "wayland")), "KDE Plasma / Wayland"),
+        (Detect(("XDG_CURRENT_DESKTOP", "niri"), ("WAYLAND_DISPLAY", "wayland-1")), "niri / Wayland"),
+        (Detect(("XDG_CURRENT_DESKTOP", "GNOME"), ("XDG_SESSION_TYPE", "wayland")), "GNOME / Wayland"),
+        (Detect(("XDG_CURRENT_DESKTOP", "ubuntu:GNOME"), ("DISPLAY", ":0")), "ubuntu · GNOME / X11"),
+        (Detect(("XDG_CURRENT_DESKTOP", ""), ("XDG_SESSION_DESKTOP", "plasma"), ("XDG_SESSION_TYPE", "x11")), "KDE Plasma / X11"),
+        (Detect(("DESKTOP_SESSION", "future-desktop")), "future-desktop / 未知会话"),
+        (Detect(("XDG_CURRENT_DESKTOP", " "), ("XDG_SESSION_DESKTOP", ""), ("DESKTOP_SESSION", "gnome")), "gnome / 未知会话"),
+        (Detect(), "未知桌面 / 未知会话")
+    };
+    foreach (var (actual, expected) in cases)
+        if (actual.DisplayName != expected) throw new Exception($"Desktop detection: {actual.DisplayName} != {expected}");
+    WaylandGlobal[] native = [new(1, "zwlr_screencopy_manager_v1", 1), new(2, "zwlr_virtual_pointer_manager_v1", 2), new(3, "zwp_virtual_keyboard_manager_v1", 1)];
+    if (!DesktopBackend.HasNativeCapture(native) || !DesktopBackend.HasNativeInput(native)
+        || DesktopBackend.HasNativeCapture([]) || DesktopBackend.HasNativeInput(native.Take(2))
+        || DesktopBackend.HasNativeInput([new(1, "zwlr_virtual_pointer_manager_v1", 1), native[2]]))
+        throw new Exception("Desktop capability selection failed.");
+    Console.WriteLine("PASS: desktop/session detection and compositor capability selection");
+    return;
+}
+
+if (args.Contains("--desktop-portal-check"))
+{
+    using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+    Console.WriteLine("Desktop: " + DesktopEnvironmentInfo.Current.DisplayName);
+    await using (var desktop = await DesktopBackend.OpenAsync(enableInput: true, stop.Token))
+    {
+        var globals = await DesktopBackend.DiscoverAsync(stop.Token);
+        var outputs = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).ToArray();
+        foreach (var output in outputs)
+        {
+            for (var i = 0; i < 12; i++)
+            {
+                var captureTime = Stopwatch.StartNew();
+                var frame = await DesktopBackend.CaptureAsync(output, ct: stop.Token);
+                try { if (frame.Pixels.Length == 0 || frame.Stride < frame.Width * 4) throw new Exception("Invalid capture.");
+                    if (i > 0 && captureTime.Elapsed > TimeSpan.FromSeconds(2)) throw new Exception("Capture blocks on an unchanged desktop.");
+                    Console.WriteLine($"PASS: capture {frame.Width}x{frame.Height}, stride={frame.Stride}"); }
+                finally { Array.Clear(frame.Pixels); }
+                await Task.Delay(1000, stop.Token);
+            }
+            await using var pointer = await DesktopBackend.CreatePointerAsync(output, stop.Token);
+            // Zero scroll checks routing without moving the pointer or clicking.
+            await pointer.ApplyAsync(new HostMouseMessage(MouseAction.Scroll, 0, 0, 0), PointerCoordinates.MacNormalized, 1, 1, stop.Token);
+            for (var i = 0; i < 20; i++)
+            {
+                using var generation = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+                generation.CancelAfter(TimeSpan.FromMilliseconds(1));
+                try
+                {
+                    var frame = await DesktopBackend.CaptureAsync(output, ct: generation.Token);
+                    Array.Clear(frame.Pixels);
+                }
+                catch (OperationCanceledException) when (generation.IsCancellationRequested) { }
+                // Encoder restarts must not destroy the shared portal or corrupt
+                // the next response even if cancellation interrupts frame transfer.
+                await DesktopBackend.DiscoverAsync(stop.Token);
+            }
+            Console.WriteLine("PASS: repeated capture cancellation preserves desktop session and response framing");
+        }
+        await using var keyboard = await DesktopBackend.CreateKeyboardAsync(stop.Token);
+        await keyboard.ApplyAsync(new HostKeyMessage(KeyAction.Click, 56), stop.Token);
+        Console.WriteLine("PASS: input permission, neutral pointer event, Shift press/release");
+    }
+    Console.WriteLine("PASS: desktop session disposed");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--video-recovery") { await RecoveryChecks.RunAsync(args[1]); return; }
 
 if (args.Contains("--terminal-manager"))
@@ -245,7 +318,10 @@ Check(receivedAsk is { IsRead: true, Format: 13, BlockKey: "key" }, "clipboard n
 var transfer = HostClipboardProtocol.ReadResponse(receivedAsk!, "中文").ToList();
 Check(HostClipboardTransfers.Decode(transfer[0].Data) is { Kind: "confirm", Count: 1, Result: 1 }, "clipboard block-count confirmation");
 var dataBlock = HostClipboardTransfers.Decode(transfer[1].Data)!;
-Check(dataBlock.Data.SequenceEqual(new byte[] { 0xe4, 0xb8, 0xad, 0xe6, 0x96, 0x87 }), "UU Unicode text format transports UTF8, not native Windows UTF16");
+Check(dataBlock.Data.SequenceEqual(new byte[] { 0x2d, 0x4e, 0x87, 0x65, 0, 0 }), "Windows Unicode clipboard block uses null-terminated UTF16LE");
+var utf8Transfer = HostClipboardProtocol.ReadResponse(new(9, 1, "", "key", true), "中文").ToList();
+Check(HostClipboardTransfers.Decode(utf8Transfer[1].Data)!.Data.SequenceEqual(new byte[] { 0xe4, 0xb8, 0xad, 0xe6, 0x96, 0x87 }),
+    "UTF8 clipboard block retains UTF8 for the requested text format");
 if (OperatingSystem.IsLinux())
 {
     var profile = LinuxDeviceProfile.Refresh(new("test", "test-client", "test-system", "", "", "", "", "", "", "", "", "", "", [], 96));

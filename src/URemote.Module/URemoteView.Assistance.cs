@@ -187,18 +187,20 @@ public sealed partial class URemoteView
     }
     private async Task RefreshAssistanceAsync()
     {
+        if (loggingOut) return;
+        var generation = accountGeneration;
         try
         {
             var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
             using var api = new UuMacHostApi(state);
             var info = await api.GetAssistanceInfoAsync(lifetime.Token);
-            if(disposed) return;
+            if(disposed || loggingOut || generation != accountGeneration) return;
             if (codeSettings?.DeviceId != state.DeviceId) LoadAssistanceSettings();
             assistanceDevice = state.DeviceId; assistanceId.Text = info.ConnectId;
             HostAssistance.SetEnabled(state.DeviceId, allowAssistance);
             UpdateAssistanceState();
         }
         catch(OperationCanceledException) when(lifetime.IsCancellationRequested) { }
-        catch { if(!disposed) { assistanceDevice = null; assistanceId.Text = "未获取"; assistanceCode.Text = ""; assistanceHint.Text = "协助信息获取失败，请检查登录状态后重新获取。"; } }
+        catch { if(!disposed && !loggingOut && generation == accountGeneration) { assistanceDevice = null; assistanceId.Text = "未获取"; assistanceCode.Text = ""; assistanceHint.Text = "协助信息获取失败，请检查登录状态后重新获取。"; } }
     }
 }

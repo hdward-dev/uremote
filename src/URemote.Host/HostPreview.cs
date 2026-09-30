@@ -16,7 +16,7 @@ public static class HostPreview
         var dimensions = new List<(int Width, int Height)>();
         foreach (var output in outputs)
         {
-            var f = await WaylandScreenCapture.CaptureAsync(output, ct: ct);
+            var f = await DesktopBackend.CaptureAsync(output, ct: ct);
             dimensions.Add(((int)f.Width, (int)f.Height)); Array.Clear(f.Pixels);
         }
         var frameRateLimits = await ReadFrameRateLimitsAsync(outputs, report, ct);
@@ -227,7 +227,8 @@ public static class HostPreview
                         var activeMedia = media;
                         void PeerFailed(Task task)
                         {
-                            _ = task.Exception;
+                            var error = task.Exception?.GetBaseException();
+                            report("peer-pipeline-failure;type=" + error?.GetType().Name + ";site=" + error?.TargetSite?.Name);
                             try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
                             activeMedia.Dispose();
                             report("peer-pipeline-ended; publisher-kept-online");
@@ -338,7 +339,7 @@ public static class HostPreview
         {
         if (profiles.SingleVideoStream && profiles.SelectedScreen != index) return;
         var profile = profiles.Get(index);
-        var first = await WaylandScreenCapture.CaptureAsync(output, ct: ct);
+        var first = await DesktopBackend.CaptureAsync(output, ct: ct);
         await using var encoder = new StreamingH264Encoder(ffmpeg, (int)first.Width, (int)first.Height, first.YInverted, first.ShmFormat, profile.Fps, profile.Width, profile.Height, profile.Bitrate, profile.Crf);
         report($"video-encoder-config;screen={index + 1};width={profile.Width};height={profile.Height};fps={profile.Fps};bitrate={profile.Bitrate};crf={profile.Crf}");
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -366,7 +367,7 @@ public static class HostPreview
                     if (remaining > 0)
                         await Task.Delay(TimeSpan.FromMilliseconds(Math.Ceiling(remaining)), stop.Token);
                     else nextFrame = cadence.ElapsedTicks; // Skip missed deadlines instead of bursting to catch up.
-                    frame = await WaylandScreenCapture.CaptureAsync(output, ct: stop.Token);
+                    frame = await DesktopBackend.CaptureAsync(output, ct: stop.Token);
                 }
             }
             finally { Array.Clear(frame.Pixels); encoder.CompleteInput(); }
@@ -426,7 +427,7 @@ public static class HostPreview
     private static async Task<int[]> ReadFrameRateLimitsAsync(IReadOnlyList<uint> outputs, Action<string> report, CancellationToken ct)
     {
         IReadOnlyDictionary<uint, int> rates;
-        try { rates = await WaylandOutputRefresh.ReadAsync(ct); }
+        try { rates = await DesktopBackend.ReadRefreshRatesAsync(ct); }
         catch (Exception e) when (!ct.IsCancellationRequested && e is IOException or System.Net.Sockets.SocketException or OperationCanceledException or FormatException)
         { rates = new Dictionary<uint, int>(); report("display-refresh-unavailable;fallback-fps=60"); }
         return outputs.Select((output, index) =>

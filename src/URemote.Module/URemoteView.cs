@@ -35,9 +35,14 @@ public sealed partial class URemoteView : UserControl, IDisposable
     private Task? session;
     private DesktopHostLogin? login;
     private bool loginBusy;
+    private bool loggingOut;
+    private int accountGeneration;
+    private readonly Button logout = new() { Content = "退出登录", IsVisible = false };
     private readonly TextBox mobile = new() { PlaceholderText = "手机号（+86）", MaxLength = 11 };
     private readonly TextBox code = new() { PlaceholderText = "短信验证码", MaxLength = 10, PasswordChar = '●' };
     private readonly Button sendCode = new() { Content = "发送验证码" };
+    private readonly DispatcherTimer sendCodeTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private bool sendingCode;
     private readonly Button completeLogin = new() { Content = "登录并启用被控" };
     private readonly StackPanel loginPanel = new() { Spacing = 10, IsVisible = false };
     private CancellationTokenSource? sessionStop;
@@ -65,7 +70,9 @@ public sealed partial class URemoteView : UserControl, IDisposable
         LoadAssistanceSettings();
         BuildInterface(dataDirectory);
         sendCode.Click += async (_, _) => await LoginAsync(false);
+        sendCodeTimer.Tick += (_, _) => UpdateSendCodeState();
         completeLogin.Click += async (_, _) => await LoginAsync(true);
+        logout.Click += async (_, _) => await LogoutAsync();
         Avalonia.Automation.AutomationProperties.SetName(hostSwitch, "允许本机被远程控制");
         hostSwitch.PropertyChanged += (_, e) =>
         {
@@ -82,29 +89,31 @@ public sealed partial class URemoteView : UserControl, IDisposable
         {
             if (Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") _ = RefreshDevicesAsync();
             if (!OperatingSystem.IsLinux()) { status.Text = "当前被控后端仅支持 Linux / Wayland"; hostSwitch.IsEnabled = false; return; }
-            var globals = await WaylandCapabilities.DiscoverAsync(lifetime.Token);
+            var globals = await DesktopBackend.DiscoverAsync(lifetime.Token);
             if (disposed) return;
             foreach (var id in globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5))
             {
                 var check = new CheckBox { Content = "显示屏 " + (outputs.Count + 1), IsChecked = true, Margin = new Thickness(0, 0, 16, 8) };
                 outputs.Add((id, check)); screens.Children.Add(check);
             }
+            if (outputs.Count == 0) screens.Children.Add(Text("开启被控后读取显示器；若出现系统授权窗口，请选择需要共享的屏幕。", 12, true));
             _ = RefreshLocalScreensAsync();
             hostSwitch.IsEnabled = true;
             if (hostEnabled && Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") Start();
             else { hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "被控已关闭"; detail.Text = "可手动开启被控。"; }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch { if (!disposed) { hostBadge.Text = "○  被控不可用"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "无法访问显示器"; detail.Text = "需要在支持 screencopy 的 Wayland 桌面会话中打开。"; } }
+        catch (Exception e) { if (!disposed) { hostBadge.Text = "○  被控不可用"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "桌面共享不可用";
+            detail.Text = e is NotSupportedException or InvalidOperationException ? e.Message : "请检查 Wayland 会话、桌面 Portal 服务及 Python / GStreamer 依赖。"; } }
     }
     private async void Start()
     {
-        if (disposed || starting || session is { IsCompleted: false }) return;
+        if (disposed || loggingOut || starting || session is { IsCompleted: false }) return;
         starting = true;
         hostSwitch.IsEnabled = false;
         try
         {
-            var globals = await WaylandCapabilities.DiscoverAsync(lifetime.Token);
+            var globals = await DesktopBackend.DiscoverAsync(lifetime.Token);
             if (disposed) return;
             var current = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
             if (!outputs.Select(o => o.Id).SequenceEqual(current))
@@ -119,6 +128,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
                         Margin = new Thickness(0, 0, 16, 8) };
                     outputs.Add((current[i], check)); screens.Children.Add(check);
                 }
+                if (current.Length == 0) screens.Children.Add(Text("请在系统授权窗口选择需要共享的屏幕。", 12, true));
                 Report("display-list-refreshed;count=" + current.Length);
             }
             _ = RefreshLocalScreensAsync();
@@ -174,15 +184,16 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 Console.WriteLine("host-start-failed;type=" + e.GetType().Name + ";site=" + e.TargetSite?.Name);
                 var displayChanged = e is InvalidOperationException && e.Message == "显示器已变化，请重新选择。";
                 Post(() => { if (!restoreFailed) { status.Text = displayChanged ? "显示器已变化" : "连接已停止";
-                    detail.Text = displayChanged ? "请重新开启被控，将自动读取当前显示器。" : "请检查网络、登录状态或是否已有另一被控实例运行。"; } });
+                    detail.Text = displayChanged ? "请重新开启被控，将自动读取当前显示器。" : e is NotSupportedException or InvalidOperationException or DesktopSessionClosedException ? e.Message : "请检查网络、登录状态或是否已有另一被控实例运行。"; } });
             }
             finally { Post(() => { session = null; SetHostSwitch(false); hostSwitch.IsEnabled = true; hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); settings.IsEnabled = true; advancedSettings.IsEnabled = true; }); }
         });
     }
     private async Task LoginAsync(bool complete)
     {
-        if (disposed || loginBusy || session is { IsCompleted: false }) return;
-        loginBusy = true; sendCode.IsEnabled = completeLogin.IsEnabled = false; hostSwitch.IsEnabled = false;
+        if (disposed || loggingOut || loginBusy || session is { IsCompleted: false }) return;
+        if (!complete && login?.CodeResendSeconds > 0) { UpdateSendCodeState(); return; }
+        loginBusy = true; sendingCode = !complete; UpdateSendCodeState(); completeLogin.IsEnabled = false; hostSwitch.IsEnabled = false;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         try
@@ -193,7 +204,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 var value = code.Text ?? ""; code.Text = "";
                 await login.CompleteAsync(value, deadline.Token);
                 await login.DisposeAsync(); login = null;
-                mobile.Text = ""; loginPanel.IsVisible = false;
+                mobile.Text = ""; UpdateAccountDisplay(DesktopHostSession.ReadIdentity(identity.Text ?? ""));
                 _ = RefreshDevicesAsync(); ShowPage(0);
                 detail.Text = "登录完成，正在启用被控。";
                 Start();
@@ -205,7 +216,50 @@ public sealed partial class URemoteView : UserControl, IDisposable
             }
         }
         catch { if (!disposed) detail.Text = "登录操作未完成，请检查手机号、验证码和网络；重新发送至少间隔 60 秒。"; }
-        finally { loginBusy = false; if (!disposed) { sendCode.IsEnabled = completeLogin.IsEnabled = true; hostSwitch.IsEnabled = true; } }
+        finally { loginBusy = false; sendingCode = false; if (!disposed) { UpdateSendCodeState(); completeLogin.IsEnabled = true; hostSwitch.IsEnabled = true; } }
+    }
+    private void UpdateSendCodeState()
+    {
+        if (disposed) return;
+        var seconds = login?.CodeResendSeconds ?? 0;
+        sendCode.Content = seconds > 0 ? $"重新发送（{seconds}s）" : sendingCode ? "正在发送…" : "发送验证码";
+        sendCode.IsEnabled = !loginBusy && !loggingOut && seconds == 0;
+        if (seconds > 0) sendCodeTimer.Start(); else sendCodeTimer.Stop();
+    }
+    private async Task LogoutAsync()
+    {
+        if (disposed || loggingOut || loginBusy || starting) return;
+        loggingOut = true; accountGeneration++; IsEnabled = false;
+        try
+        {
+            var running = session;
+            Stop();
+            if (running is not null) await running;
+            var controllers = remoteWindows.Values.ToArray();
+            var tools = toolWindows.Values.ToArray();
+            foreach (var window in controllers) window.Close();
+            foreach (var window in tools) window.Close();
+            // Closed connections can finish with a network error; all completion
+            // tasks still need to settle before clearing the account.
+            try { await Task.WhenAll(controllers.Select(w => w.Completion).Concat(tools.Select(w => w.Completion))); }
+            catch { }
+            if (login is not null) { await login.DisposeAsync(); login = null; }
+            await DesktopHostLogin.LogoutAsync(identity.Text ?? "", lifetime.Token);
+            if (disposed) return;
+            devices = []; selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false;
+            foreach (var bitmap in previewCache.Values) bitmap.Dispose(); previewCache.Clear();
+            foreach (var bitmap in localBitmaps) bitmap.Dispose(); localBitmaps.Clear(); localScreens.Children.Clear();
+            mobile.Text = ""; code.Text = ""; assistanceDevice = null; codeSettings = null;
+            assistanceId.Text = "尚未登录"; assistanceCode.Text = "";
+            assistanceHint.Text = "登录后获取本机协助信息。";
+            UpdateAccountDisplay(null); UpdateSendCodeState();
+            catalogHint.Text = "登录后，同步你的 UU 账号设备"; RenderDevices();
+            status.Text = "已退出登录"; detail.Text = "本机登录状态已清除。重新登录后可开启被控。";
+            ShowPage(2);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch { if (!disposed) detail.Text = "退出未完成，请检查登录文件权限或是否有另一实例运行后重试。"; }
+        finally { loggingOut = false; if (!disposed) { UpdateSendCodeState(); IsEnabled = true; } }
     }
     private void Report(string value)
     {
@@ -215,6 +269,8 @@ public sealed partial class URemoteView : UserControl, IDisposable
     {
         switch (value)
         {
+            case "desktop-authorizing": status.Text = "准备桌面共享"; detail.Text = "若系统显示授权窗口，请选择共享的显示器并允许所需权限。"; break;
+            case "desktop-ready": _ = RefreshAuthorizedScreensAsync(); break;
             case "assistance-code-rotated": UpdateAssistanceState(); break;
             case "file-transfer-received": transferState.Text = "文件已接收，已保存到接收目录。"; break;
             case "file-transfer-sent": transferState.Text = "文件已发送，对方已确认收到。"; break;
@@ -267,7 +323,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         disposed = true; termination?.Dispose(); lifetime.Cancel(); sessionStop?.Cancel();
         // Cleanup does not depend on the UI dispatcher, so the host can safely unload afterwards.
         try { session?.GetAwaiter().GetResult(); } catch { }
-        deviceTimer?.Stop();
+        deviceTimer?.Stop(); sendCodeTimer.Stop();
         connectionTimer.Stop(); currentControlConnection = null;
         previewHttp.Dispose();
         foreach (var bitmap in previewCache.Values) bitmap.Dispose();

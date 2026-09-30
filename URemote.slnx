@@ -8,4 +8,5 @@
   <Project Path="tests/URemote.Checks/URemote.Checks.csproj" />
   <Project Path="tests/URemote.Media.Tests/URemote.Media.Tests.csproj" />
   <Project Path="tests/URemote.ProtocolChecks/URemote.Tests.csproj" />
+  <Project Path="tests/URemote.AccountChecks/URemote.AccountChecks.csproj" />
 </Solution>

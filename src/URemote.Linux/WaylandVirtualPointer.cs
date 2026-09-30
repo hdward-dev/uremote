@@ -4,7 +4,7 @@ namespace URemote.Linux;
 
 // Native Wayland protocol, no shell input tools, root access or /dev/uinput required.
 // Only the authenticated media/data-channel owner should pass input to this backend.
-public sealed class WaylandVirtualPointer : IAsyncDisposable
+public sealed class WaylandVirtualPointer : IDesktopPointer
 {
     private readonly WaylandConnection connection;
     private readonly uint pointer;

@@ -13,6 +13,7 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     private readonly UuMacHostApi api;
     private string? pendingMobile;
     private DateTimeOffset sentAt;
+    public int CodeResendSeconds => (int)Math.Clamp(Math.Ceiling(60 - (DateTimeOffset.UtcNow - sentAt).TotalSeconds), 0, 60);
     private DesktopHostLogin(string path, FileStream identityLock, SavedHostIdentity identity)
     { this.path = path; this.identityLock = identityLock; this.identity = identity; api = new(identity.State); }
     public static DesktopHostLogin Open(string path)
@@ -37,11 +38,25 @@ public sealed class DesktopHostLogin : IAsyncDisposable
         }
         catch { gate.Dispose(); throw; }
     }
+    // Called only after hosting and controller windows have stopped.
+    public static async Task LogoutAsync(string path, CancellationToken ct)
+    {
+        await using var owner = Open(path);
+        var saved = owner.identity;
+        var platform = HostWirePlatform.Windows ? 1 : 4;
+        var samePlatform = saved.Platform == platform;
+        var state = samePlatform
+            ? saved.State with { Token = "", UserId = "" }
+            : new LoginState(ClientId: saved.State.ClientId, Channel: saved.State.Channel);
+        owner.identity = saved with { State = state, Status = samePlatform ? "initialized-not-logged-in" : "uninitialized", Platform = samePlatform ? platform : 0, LoginAccount = "" };
+        await owner.SaveAsync(ct);
+        if (saved.State.DeviceId.Length > 0) HostAssistance.SetEnabled(saved.State.DeviceId, false);
+    }
     public async Task SendCodeAsync(string mobile, CancellationToken ct)
     {
         if (identity.State.IsAuthenticated) throw new InvalidOperationException("Already logged in.");
         if (mobile.Length != 11 || !mobile.All(char.IsAsciiDigit)) throw new ArgumentException("Invalid mobile number.");
-        if (DateTimeOffset.UtcNow - sentAt < TimeSpan.FromSeconds(60)) throw new InvalidOperationException("SMS cooldown.");
+        if (CodeResendSeconds > 0) throw new InvalidOperationException("SMS cooldown.");
         if (api.State.DeviceId.Length == 0)
         {
             await api.InitializeAsync(identity.Profile, ct);
@@ -56,8 +71,13 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     {
         if (pendingMobile is null) throw new InvalidOperationException("Send a code first.");
         await api.LoginAsync(pendingMobile, code, ct: ct);
-        identity = identity with { State = api.State, Status = "logged-in-not-hosting" };
+        identity = identity with { State = api.State, Status = "logged-in-not-hosting", LoginAccount = MaskAccount(pendingMobile) };
         await SaveAsync(ct); pendingMobile = null;
+    }
+    public static string MaskAccount(string mobile)
+    {
+        if (mobile.Length != 11 || !mobile.All(char.IsAsciiDigit)) throw new ArgumentException("Invalid mobile number.");
+        return mobile[..3] + "****" + mobile[^4..];
     }
     private async Task SaveAsync(CancellationToken ct)
     {

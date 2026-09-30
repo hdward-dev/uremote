@@ -11,18 +11,18 @@ internal static class HostInput
     {
         while (media.State != RTCPeerConnectionState.connected) await Task.Delay(100, ct);
         await using var fileTransfer = enableFiles ? new HostFileTransfer(media.SendData, report, ct) : null;
-        await using var keyboard = enableInput ? await WaylandVirtualKeyboard.CreateAsync(ct) : null;
+        await using var keyboard = enableInput ? await DesktopBackend.CreateKeyboardAsync(ct) : null;
         await using var clipboard = enableClipboard ? new HostClipboard(media, report) : null;
         using var clipboardStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var watch = clipboard?.WatchAsync(clipboardStop.Token) ?? Task.CompletedTask;
-        var displays = new List<(uint Width, uint Height, WaylandVirtualPointer Pointer)>();
+        var displays = new List<(uint Width, uint Height, IDesktopPointer Pointer)>();
         try
         {
         foreach (var output in enableInput ? outputs : Array.Empty<uint>())
         {
-            var screen = await WaylandScreenCapture.CaptureAsync(output, ct: ct);
+            var screen = await DesktopBackend.CaptureAsync(output, ct: ct);
             Array.Clear(screen.Pixels);
-            var pointer = await WaylandVirtualPointer.CreateAsync(output, ct);
+            var pointer = await DesktopBackend.CreatePointerAsync(output, ct);
             displays.Add((screen.Width, screen.Height, pointer));
         }
         var count = 0;

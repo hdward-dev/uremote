@@ -44,7 +44,7 @@ public static class HostIdentityMigration
         }
         Backup(identityPath);
         if (secret is not null) Backup(assistancePath);
-        var updated = identity with { State = next, Profile = profile, Platform = 1 };
+        var updated = identity with { State = next, Profile = profile, Platform = 1, LoginAccount = pending.LoginAccount };
         try
         {
             if (secret is not null) (secret with { DeviceId = next.DeviceId }).Save(assistancePath);

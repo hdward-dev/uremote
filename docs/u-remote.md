@@ -25,11 +25,15 @@ U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动�
 - 退出 AsterDock 时取消会话并清理虚拟键鼠、编码器、音频进程与剪贴板所有者。
   宿主关闭按钮可能隐藏到托盘；需点击停止被控或从托盘退出才能终止。
 - 首次登录可在模块内输入手机号和短信验证码。只有点击发送按钮才发送短信，不自动重发。
-  保存的登录令牌存放在私有身份文件（Linux 600 权限），不记录手机号和验证码。
-- Linux/niri 双屏由 wlr-screencopy 采集，持续 FFmpeg/libx264 编码，原始分辨率 / 默认目标 30 FPS（客户端可请求最高 60 FPS）。
+  保存的登录令牌存放在私有身份文件（Linux 600 权限），只保存用于显示的脱敏手机号，不记录完整手机号和验证码。
+- “账号与设置”提供“退出登录”：先停止本机被控并关闭本应用的主控、终端和文件连接，再清除本机令牌和账号状态。当前平台的设备注册保留；旧平台身份退出后，下一次登录按当前平台重新初始化设备，并保留稳定的本机硬件标识。退出操作不自动发送短信。账号页以账号卡片显示登录状态和脱敏手机号；旧身份记录没有手机号时显示 UU 账号 ID。未登录时显示独立登录表单，高级设置默认折叠。
+- Linux/Wayland 按实际桌面能力选择后端：niri 使用 wlr-screencopy 和虚拟键鼠；KDE Plasma 使用桌面 Portal / PipeWire 采集与 Portal 键鼠控制。GNOME 等提供相同 Portal 接口的 Wayland 桌面可沿用该后端，仍需对应环境实测。主页底栏显示当前桌面环境及 Wayland / X11 会话类型；X11 被控尚未适配。
+- 壁纸预览支持 KDE 图片配置、主题默认壁纸和壁纸包的明暗版本（包括 SVG）；本机卡片直接生成预览，开启被控后沿用壁纸上传流程。验证码按钮显示 60 秒重发倒计时并在到期后恢复可用。
+  Portal 后端在开启被控时由系统弹窗授权共享的显示器和键鼠权限，不保存授权令牌；取消授权不会上线，停止被控会关闭共享会话。最多选择 5 个显示器；重新开启时需重新授权，显示器列表以系统选择器授权结果为准。
+  两种后端共用持续 FFmpeg/libx264 编码，原始分辨率 / 默认目标 30 FPS（客户端可请求最高 60 FPS）。
   采用 CPU/SHM 管线，非 GPU 零拷贝；没有实现动态码率和即时关键帧反馈，丢包恢复依赖每秒关键帧。
 - 系统音频通过 PipeWire `pw-cat` 的输出监视器获取，48 kHz 双声道 / 20 ms Opus 帧，经 SRTP 发送。不采集麦克风。
-- 文本剪贴板使用 `wl-copy` / `wl-paste`，支持 V3 文本通知及 V4 格式读取响应；UU 传输文本使用 UTF-8。
+- 文本剪贴板使用 `wl-copy` / `wl-paste`，支持 V3 文本通知及 V4 格式读取响应；V3 文本使用 UTF-8，V4 Windows Unicode 格式使用以空字符结尾的 UTF-16LE。
   当前上限 64 KiB，已加入 Windows Unicode 格式协商及 V4 分块接收；不支持文件/图片。Windows/iOS 官方客户端兼容性需实测。
 - 远程终端已接入官方 4.41.0 握手、环境检查、会话列表、新建/恢复、输入输出、窗口调整和关闭。
   使用当前用户的原生 Linux PTY；与键鼠共用本机允许开关。远端断开保留会话，本机停止被控或退出宿主清理会话。
@@ -38,6 +42,8 @@ U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动�
 - 当前被控后端只支持 Linux/Wayland；Windows/Mac 的 AsterDock 可加载模块并显示平台说明。
 
 ## 验证状态
+
+KDE Plasma / Wayland 本机后端检查：系统 Portal 授权后，跨越 10 秒连续采集 12 帧 1366×768 BGRA 画面、20 次重复取消采集仍保持共享、零滚动事件、Shift 按下/释放及关闭会话均通过；这不代表官方客户端端到端连接或多屏效果已实测。桌面环境识别覆盖 KDE、niri、GNOME、复合桌面名、未知桌面及 X11。
 
 已确认的此前实测：Windows/iOS 官方客户端连接，Windows 键鼠控制及双屏对应正确。
 新增本机验证：110 项协议检查、8 项 WebRTC 回环检查（含 Opus）、连续 H264 编码及解码、剪贴板协议样例、真实 AsterDock 宿主渲染。
@@ -54,7 +60,9 @@ CPU 来自 /proc/cpuinfo，内存从 MemTotal 转为纯数字 MB（UU 界面自�
 
 ## 本机依赖与配置
 
-.NET 10、支持 screencopy/虚拟键鼠的 Wayland 桌面、带 libx264 的 FFmpeg；音频需要 PipeWire 和 `pw-cat`，剪贴板需要 `wl-clipboard`。
+.NET 10、Wayland 桌面、带 libx264 的 FFmpeg；niri 原生后端需要 screencopy/虚拟键鼠协议。
+KDE / Portal 后端额外需要 `xdg-desktop-portal`、对应桌面实现（KDE 为 `xdg-desktop-portal-kde`，GNOME 为 `xdg-desktop-portal-gnome`）、Python 3 / PyGObject、GStreamer 的 PipeWire、videoconvert、appsink 插件和 GI 类型库。桥接脚本内嵌于程序集，屏幕像素仅通过私有进程管道传递，不写入磁盘。静止画面复用最近一帧，避免等待画面变化时阻塞键鼠指令；关闭会话清空缓存。媒体管线重启或单个控制端断开时，已经发送的桥接请求会完整读取响应，避免取消读取导致共享会话被误销毁。
+音频需要 PipeWire 和 `pw-cat`；剪贴板沿用 `wl-clipboard`，其支持取决于桌面的 data-control 协议，GNOME 的剪贴板兼容尚未适配。
 默认身份位于模块数据目录 `identity.json`，编码器从 PATH 查找；高级设置可修改。
 开发时可使用 `UREMOTE_IDENTITY`、`UREMOTE_FFMPEG`。`UREMOTE_NO_AUTO_START=1` 仅用于不联网的界面检查。
 请勿把实际身份文件、验证码、原始录屏、音频或剪贴板数据加入源码或 appbundle。
@@ -66,6 +74,10 @@ dotnet build src/URemote.Module -m:1
 dotnet run --project tests/URemote.ProtocolChecks
 dotnet run --project tests/URemote.Checks -- /path/to/ffmpeg
 dotnet run --project tests/URemote.Media.Tests -- /path/to/ffmpeg
+dotnet run --project tests/URemote.AccountChecks
+dotnet run --project tests/URemote.Checks -- --desktop-environment
+# 会弹出系统授权框：采集每屏 12 帧（间隔 1 秒）、零滚动及 Shift 按下/释放，不联网、不保存画面
+dotnet run --project tests/URemote.Checks -- --desktop-portal-check
 ```
 
 `--capture-benchmark` 额外测量真实显示器采集，像素用后清空，不保存或发送。
