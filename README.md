@@ -37,11 +37,19 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
 - 显示器变化及部分网络、采集故障自动重试。
 
-本机被控需要已登录的 Linux Wayland 桌面，支持 wlr-screencopy 和虚拟键鼠协议，以及带 libx264 的 FFmpeg。系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。Windows/macOS 本机被控后端尚未实现。
+本机被控需要已登录的 Linux Wayland 桌面及带 libx264 的 FFmpeg。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma 使用桌面 Portal / PipeWire，需要对应桌面的 Portal 实现、Python 3 / PyGObject 和 GStreamer 插件，详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。Windows/macOS 本机被控后端尚未实现。
 
 声音、剪贴板、跨客户端兼容性及长期稳定性仍需验证。文件接收目录为 `~/Download/uurc`。不提供虚拟显示器，无登录桌面或系统休眠时不保证远控可用。
 
 更多细节见 [功能与验证说明](docs/u-remote.md) 和 [无人值守说明](docs/unattended-linux.md)。无人值守文档中的服务配置描述开发机部署，安装插件不会自动安装系统服务。
+
+## 已验证环境
+
+| 系统版本 | 桌面环境 | 会话类型 | 已验证范围 |
+| --- | --- | --- | --- |
+| Ubuntu 26.04.1 LTS（Kubuntu 桌面） | KDE Plasma 6.6.6 | Wayland | 桌面环境识别、Portal 授权与连续画面采集、键鼠接口、取消采集后保持共享、关闭会话，以及主题默认壁纸预览 |
+
+以上为本机后端与界面检查结果，不代表所有官方客户端、多屏、声音、剪贴板及长期稳定性均已验证。GNOME 尚待实测；后续环境验证通过后会补充到此表。
 
 ## 插件开发
 
