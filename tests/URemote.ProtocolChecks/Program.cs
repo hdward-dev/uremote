@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using URemote.Core;
 using URemote.Probe;
 
+Environment.SetEnvironmentVariable("UREMOTE_HOST_PLATFORM", "windows");
 var passed = 0;
 ConnectionInfoChecks.Run();
 void Check(bool condition, string label)
@@ -117,8 +118,8 @@ Reject(() => HostMouseMessage.Parse("{\"action\":\"execute_command\",\"content\"
 using var hostRequest = UuMacHostProtocol.CreateRoomRequest(state, 0, 1700000000,
     Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"));
 Check(hostRequest.Headers.GetValues("X-Param-SIGN").Single() ==
-    "52b659657251c538f1ab58870f6adfa50de7eea0d9827cdc2ce372192ac4d216",
-    "observed Mac header profile matches independent Python HMAC fixture");
+    "4dc5218f77b22d7f0a46316be6dc8181d35e401c6ebf3ddf7b4f57a65dc4110a",
+    "observed Windows header profile matches independent Python HMAC fixture");
 Check(await hostRequest.Content!.ReadAsStringAsync() == "{\"last_controlled_interval\":0}"
     && hostRequest.Headers.Authorization?.Parameter == "fixture-token",
     "host request body and bearer authentication");

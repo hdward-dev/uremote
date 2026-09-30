@@ -45,7 +45,7 @@ public sealed class DesktopHostLogin : IAsyncDisposable
         if (api.State.DeviceId.Length == 0)
         {
             await api.InitializeAsync(identity.Profile, ct);
-            identity = identity with { State = api.State, Status = "initialized-not-logged-in" };
+            identity = identity with { State = api.State, Status = "initialized-not-logged-in", Platform = HostWirePlatform.Windows ? 1 : 4 };
             await SaveAsync(ct);
         }
         sentAt = DateTimeOffset.UtcNow; // An uncertain network response must not immediately resend SMS.

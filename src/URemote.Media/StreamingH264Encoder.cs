@@ -16,12 +16,16 @@ public sealed class StreamingH264Encoder : IAsyncDisposable
         this.width = width; this.height = height;
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        // Frequent IDRs plus a 125 ms VBV caused periodic text-quality collapse.
+        // Keep 500 ms of encoder rate-control budget (not a playback queue),
+        // without periodic IDRs; each peer starts with an IDR and authenticated PLI/FIR
+        // requests a refresh when needed. No inter-frame lookahead or B-frame queue.
         string[] args = ["-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pixel_format", format == 1 ? "bgr0" : "bgra",
             "-video_size", $"{width}x{height}", "-framerate", fps.ToString(), "-i", "pipe:0", "-an",
             "-vf", (inverted ? "vflip," : "") + $"scale={outputWidth}:{outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear,pad={outputWidth}:{outputHeight}:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline", "-level:v", "5.1",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "baseline", "-level:v", "5.1",
             "-pix_fmt", "yuv420p", "-crf", crf.ToString(), "-maxrate", bitrate.ToString(), "-bufsize", (bitrate / 2).ToString(),
-            "-x264-params", $"aud=1:repeat-headers=1:keyint={fps}:min-keyint={fps}:scenecut=0", "-threads", "2",
+            "-x264-params", "aud=1:repeat-headers=1:keyint=infinite:scenecut=0", "-threads", "2",
             "-flush_packets", "1", "-f", "h264", "pipe:1"];
         foreach (var arg in args) start.ArgumentList.Add(arg);
         process = Process.Start(start) ?? throw new IOException("Cannot start video encoder.");

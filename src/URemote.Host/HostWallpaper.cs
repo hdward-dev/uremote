@@ -6,7 +6,7 @@ namespace URemote.Host;
 
 internal static class HostWallpaper
 {
-    private sealed record Cache(string Hash,DateTimeOffset Uploaded);
+    private sealed record Cache(string Hash,DateTimeOffset Uploaded,string DeviceId = "");
     public static async Task RunAsync(LoginState state,string ffmpeg,string identityPath,Action<string> report,CancellationToken ct)
     {
         if(!OperatingSystem.IsLinux())return;
@@ -22,8 +22,8 @@ internal static class HostWallpaper
                 else {
                     missingReported=false;
                     var hash=Convert.ToHexString(SHA256.HashData(png));
-                    if(cache?.Hash!=hash || DateTimeOffset.UtcNow-cache.Uploaded>TimeSpan.FromDays(7)) {
-                        await api.UploadAsync(png,ct);cache=new(hash,DateTimeOffset.UtcNow);failed=false;
+                    if(cache?.DeviceId!=state.DeviceId || cache.Hash!=hash || DateTimeOffset.UtcNow-cache.Uploaded>TimeSpan.FromDays(7)) {
+                        await api.UploadAsync(png,ct);cache=new(hash,DateTimeOffset.UtcNow,state.DeviceId);failed=false;
                         var temporary=cachePath+"."+Guid.NewGuid().ToString("N")+".tmp";
                         try {
                             await using(var stream=new FileStream(temporary,new FileStreamOptions{Mode=FileMode.CreateNew,Access=FileAccess.Write,UnixCreateMode=UnixFileMode.UserRead|UnixFileMode.UserWrite}))

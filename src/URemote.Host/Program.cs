@@ -35,7 +35,7 @@ try
         var profile = new HostDeviceProfile(LinuxDeviceProfile.DeviceName, client, Guid.NewGuid().ToString(), Environment.OSVersion.VersionString,
             RuntimeInformation.ProcessArchitecture.ToString(), GC.GetGCMemoryInfo().TotalAvailableMemoryBytes.ToString(),
             "NixOS", "Linux desktop", "", "NixOS", "Linux", "", "", [], 96);
-        identity = new(new(ClientId: client, Channel: "gwqd"), profile, "uninitialized");
+        identity = new(new(ClientId: client, Channel: "gwqd"), LinuxDeviceProfile.Refresh(profile), "uninitialized");
         await SaveAsync(path, identity);
     }
     if (args[0] == "--status")

@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace URemote.Core;
 
-// Official macOS wire compatibility: 4.41.0 (622), including terminal negotiation.
+// Shared signed host API. The historical type name is retained for API compatibility.
 // No network calls are made here. Do not reuse a running official device identity.
 public static class UuMacHostProtocol
 {
@@ -25,11 +25,11 @@ public static class UuMacHostProtocol
         UuSigning.ValidatePath(path);
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["X-Param-PLAT"] = "4", ["X-Param-CHN"] = "gwqd",
-            ["X-Param-PKGN"] = "com.netease.uuremote", ["X-Param-VC"] = "622",
-            ["X-Param-VN"] = "4.41.0", ["X-Param-OPR"] = "None",
+            ["X-Param-PLAT"] = HostWirePlatform.Windows ? "1" : "4", ["X-Param-CHN"] = "gwqd",
+            ["X-Param-PKGN"] = "com.netease.uuremote", ["X-Param-VC"] = HostWirePlatform.Windows ? "2770" : "622",
+            ["X-Param-VN"] = HostWirePlatform.Windows ? "4.42.0.2770" : "4.41.0", ["X-Param-OPR"] = HostWirePlatform.Windows ? "" : "None",
             ["X-Param-ENT"] = "", ["X-Param-REL"] = "prod",
-            ["X-Param-CNT"] = "CN", ["X-Param-LANG"] = "zh-CN",
+            ["X-Param-CNT"] = HostWirePlatform.Windows ? "zh-CN" : "CN", ["X-Param-LANG"] = "zh-CN",
             ["X-Param-client-id"] = state.ClientId, ["X-Param-device-id"] = state.DeviceId,
             ["X-Param-user-id"] = state.UserId,
             ["X-Param-TS"] = (timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds()).ToString(CultureInfo.InvariantCulture),

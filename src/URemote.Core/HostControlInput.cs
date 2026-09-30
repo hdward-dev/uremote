@@ -11,8 +11,10 @@ public sealed record HostKeyMessage(KeyAction Action, int MacKey)
 public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMessage? Key = null, int DisplayId = 0)
 {
     public override string ToString() => "HostControlInput(contents redacted)";
-    // This host advertises Mac protocol semantics and one display (id 0).
+    // Mouse coordinates remain normalized for both desktop platforms. Key codes differ.
     public static HostControlInput? Decode(string channel, bool isText, ReadOnlyMemory<byte> bytes, int displayCount = 1)
+        => Decode(channel, isText, bytes, displayCount, false);
+    public static HostControlInput? Decode(string channel, bool isText, ReadOnlyMemory<byte> bytes, int displayCount, bool windowsKeys)
     {
         if (channel != "CONTROL_DATA_CHANNEL") return null;
         if (isText && (bytes.Length == 0 || bytes.Span[0] != (byte)'{')) return null;
@@ -51,8 +53,13 @@ public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMes
         var keyAction = action switch { "kbd_press" => KeyAction.Press, "kbd_release" => KeyAction.Release,
             "kbd_click" => KeyAction.Click, _ => (KeyAction?)null };
         if (keyAction is null) return null; // IME/text/clipboard are deliberately separate protocols.
-        if (!root.TryGetProperty("key", out var key) || !key.TryGetInt32(out var code) || code is < 0 or > 127)
-            throw new FormatException("Invalid Mac key code.");
+        if (!root.TryGetProperty("key", out var key) || !key.TryGetInt32(out var code) || code < 0 || code > (windowsKeys ? 255 : 127))
+            throw new FormatException("Invalid virtual key code.");
+        if (windowsKeys)
+        {
+            if (WindowsVirtualKeys.ToMac(code) is not { } mapped) return null;
+            code = mapped;
+        }
         return new(Key: new(keyAction.Value, code), DisplayId: displayId);
     }
 }

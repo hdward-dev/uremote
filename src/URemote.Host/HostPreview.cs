@@ -333,7 +333,9 @@ public static class HostPreview
             var frame = first;
             try
             {
-                using var cadence = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / profile.Fps));
+                var cadence = System.Diagnostics.Stopwatch.StartNew();
+                var period = (double)System.Diagnostics.Stopwatch.Frequency / profile.Fps;
+                double nextFrame = 0;
                 while (true)
                 {
                     try
@@ -343,8 +345,13 @@ public static class HostPreview
                         await encoder.WriteAsync(frame.Pixels, (int)frame.Stride, stop.Token);
                     }
                     finally { Array.Clear(frame.Pixels); }
-                    if (profiles.Get(index) != profile || (profiles.SingleVideoStream && profiles.SelectedScreen != index)) break;
-                    await cadence.WaitForNextTickAsync(stop.Token);
+                    if (profiles.Get(index) != profile || (profiles.SingleVideoStream && profiles.SelectedScreen != index)
+                        || media.ConsumeKeyFrameRequest(videoTrack ?? index)) break;
+                    nextFrame += period;
+                    var remaining = (nextFrame - cadence.ElapsedTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (remaining > 0)
+                        await Task.Delay(TimeSpan.FromMilliseconds(Math.Ceiling(remaining)), stop.Token);
+                    else nextFrame = cadence.ElapsedTicks; // Skip missed deadlines instead of bursting to catch up.
                     frame = await WaylandScreenCapture.CaptureAsync(output, ct: stop.Token);
                 }
             }
@@ -353,18 +360,18 @@ public static class HostPreview
         var consumer = Task.Run(async () =>
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            long lastTicks = 0; var count = 0;
+            var count = 0; long sentBytes = 0;
             await foreach (var encoded in encoder.ReadAsync(stop.Token))
             {
                 try
                 {
-                    var ticks = watch.ElapsedTicks;
-                    var rtpDuration = lastTicks == 0 ? (uint)(90000 / profile.Fps) : (uint)Math.Clamp((ticks - lastTicks) * 90000 / System.Diagnostics.Stopwatch.Frequency, 1, 90000);
-                    lastTicks = ticks;
-                    media.SendH264(encoded, rtpDuration, videoTrack ?? index);
+                    // The encoder produces a fixed-rate stream; pipe scheduling jitter is not media time.
+                    var rtpDuration = (uint)(90000 / profile.Fps);
+                    await media.SendH264PacedAsync(encoded, rtpDuration, videoTrack ?? index, profile.Bitrate, stop.Token);
+                    sentBytes += encoded.Length;
                     count++;
                     if (count == 1 || count % 150 == 0)
-                        report($"video-frames-sent={count};screen={index + 1};fps={count / watch.Elapsed.TotalSeconds:F1}");
+                        report($"video-frames-sent={count};screen={index + 1};fps={count / watch.Elapsed.TotalSeconds:F1};encoded-mbps={sentBytes * 8 / watch.Elapsed.TotalSeconds / 1000000:F2}");
                 }
                 finally { Array.Clear(encoded); }
             }

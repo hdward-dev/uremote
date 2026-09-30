@@ -39,6 +39,22 @@ internal static class HostInput
                 if (observed.Add(signature)) report("input-channel-received=" + signature);
                 var firstShape = ControlPacketShape.Describe(message.IsText, message.Bytes);
                 if (observed.Count < 64 && observed.Add(category + ":" + firstShape)) report("channel-shape=" + category + ";" + firstShape);
+                if (category == "streamer" && message.IsText)
+                {
+                    using var stats = JsonDocument.Parse(message.Bytes);
+                    if (stats.RootElement.TryGetProperty("connection_period_stats_event", out var metrics))
+                    {
+                        ReportMetrics(metrics, "", 0, report);
+                        if (metrics.TryGetProperty("total_packets_received", out var received)
+                            && metrics.TryGetProperty("total_packets_lost", out var lost)
+                            && metrics.TryGetProperty("total_decoded_frames", out var decoded)
+                            && received.TryGetInt64(out var receivedCount) && lost.TryGetInt64(out var lostCount)
+                            && decoded.TryGetInt64(out var decodedCount)
+                            && profiles?.ObserveReceiver(receivedCount, lostCount, decodedCount) == true)
+                            report("video-network-adjustment;bitrate=" + profiles.Get(profiles.SelectedScreen).Bitrate);
+                    }
+                    continue;
+                }
                 if (fileTransfer is not null && await fileTransfer.HandleAsync(message)) continue;
                 if (category == "control" && !message.IsText && HostControlEcho.Reply(message.Bytes, ++sequence,
                     (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), enableInput, enableClipboard, enableFiles) is { } reply)
@@ -61,7 +77,7 @@ internal static class HostInput
                 }
                 if (clipboard is not null && await clipboard.HandleAsync(message, ct)) continue;
                 if (!enableInput) continue;
-                var input = HostControlInput.Decode(message.ChannelLabel, message.IsText, message.Bytes, outputs.Count);
+                var input = HostControlInput.Decode(message.ChannelLabel, message.IsText, message.Bytes, outputs.Count, HostWirePlatform.Windows);
                 if (input?.Mouse is { } mouse)
                 {
                     var displayId = profiles?.SingleVideoStream == true ? profiles.SelectedScreen : input.DisplayId;
@@ -104,4 +120,25 @@ internal static class HostInput
             foreach (var display in displays) await display.Pointer.DisposeAsync();
         }
     }
+    // Numeric media counters only: never retain identities, addresses, clipboard, or text values.
+    private static void ReportMetrics(JsonElement element, string path, int depth, Action<string> report)
+    {
+        if (depth > 5) return;
+        if (element.ValueKind == JsonValueKind.Object)
+            foreach (var property in element.EnumerateObject().Take(80))
+            {
+                var name = property.Name;
+                if (name.Length > 64 || !name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) continue;
+                var next = path + "/" + name;
+                if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    ReportMetrics(property.Value, next, depth + 1, report);
+                else if (property.Value.ValueKind == JsonValueKind.Number
+                    && new[] { "frame", "decode", "packet", "byte", "bitrate", "fps", "loss", "width", "height" }
+                        .Any(key => name.Contains(key, StringComparison.OrdinalIgnoreCase)))
+                    report("receiver-metric=" + next + ":" + property.Value.GetRawText());
+            }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray().Take(8)) ReportMetrics(item, path, depth + 1, report);
+    }
+
 }

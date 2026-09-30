@@ -4,6 +4,8 @@ using URemote.Linux;
 using System.Diagnostics;
 using System.Text;
 
+if (args.Length == 2 && args[0] == "--video-recovery") { await RecoveryChecks.RunAsync(args[1]); return; }
+
 if (args.Contains("--terminal-manager"))
 {
     using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -80,6 +82,57 @@ if (args.Contains("--pty-only"))
 }
 
 void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS: " + name); }
+if (args.Contains("--video-quality-checks"))
+{
+    await QualityChecks.RunAsync(args.Last());
+    return;
+}
+if (args.Contains("--video-loss-checks"))
+{
+
+var congested = new HostVideoSettings([(1920, 1080)]);
+var beforeLoss = congested.Get(0);
+Check(congested.ObserveReceiver(15079, 1325, 19), "receiver packet loss triggers recovery");
+Check(congested.Get(0).Bitrate < beforeLoss.Bitrate && congested.Get(0).Recovery == 1, "recovery lowers bitrate and restarts encoder for an IDR");
+var afterLoss = congested.Get(0);
+Check(!congested.ObserveReceiver(15079, 1325, 19) && congested.Get(0) == afterLoss, "duplicate receiver counters do not trigger recovery");
+Check(congested.ObserveReceiver(29938, 3606, 19), "stalled decoder with arriving packets triggers recovery");
+Check(!congested.ObserveReceiver(10, 0, 1), "reset counters establish a new baseline");
+
+var constrained = new HostVideoSettings([(1920,1080)]);
+long recv=0, loss=0, frames=0;
+for (var n=0;n<8;n++) constrained.ObserveReceiver(recv+=1000,loss+=100,frames+=10);
+var floor = constrained.Get(0);
+Check(floor.Bitrate==1000000 && !constrained.ObserveReceiver(recv+=1000,loss+=100,frames+=10)
+    && constrained.Get(0)==floor, "loss at floor does not restart advancing decoder");
+constrained.ObserveReceiver(recv+=1000,loss,frames+=60);
+constrained.ObserveReceiver(recv+=1000,loss,frames+=60);
+Check(constrained.Get(0).Bitrate>floor.Bitrate, "healthy feedback restores bitrate gradually");
+var recoveredRate=constrained.Get(0).Bitrate;
+constrained.Apply(new(-1,0,0,60,6,0,0,null));
+Check(constrained.Get(0).Bitrate==recoveredRate, "quality request preserves current network ceiling");
+// Independently reconstruct single-NAL and fragmented packets; marker only on the last packet of the frame.
+foreach(var length in new[]{1,1099,1100,1101,4000})
+{
+    var nal=new byte[length]; nal[0]=0x65; Array.Fill(nal,(byte)0x55,1,length-1);
+    byte[] au=[0,0,0,1,0x67,0x42,0,0,0,1,..nal];
+    var packets=H264RtpPayloads.Create(au).ToArray();
+    Check(packets.All(p=>p.Bytes.Length<=1100) && packets.Count(p=>p.Last)==1 && packets[^1].Last,
+        "RTP bounded payloads and single final marker length="+length);
+    var reconstructed=new List<byte>();
+    foreach(var packet in packets.Skip(1))
+    {
+        if((packet.Bytes[0]&31)==28)
+        {
+            if((packet.Bytes[1]&0x80)!=0) reconstructed.Add((byte)((packet.Bytes[0]&0xe0)|(packet.Bytes[1]&31)));
+            reconstructed.AddRange(packet.Bytes.Skip(2));
+        }
+        else reconstructed.AddRange(packet.Bytes);
+    }
+    Check(reconstructed.SequenceEqual(nal), "FU-A reassembles original NAL length="+length);
+}
+    return;
+}
 Check(HostTerminalProtocol.DecodeFrame(Convert.FromHexString("5445524D010900000000000000000000")) is { Type: 9, SessionId: 0, Payload.Length: 0 },
     "official terminal list request fixture");
 Check(HostTerminalProtocol.EncodeFrame(5, 1, "A"u8).SequenceEqual(Convert.FromHexString("5445524D01050000010000000100000041")),

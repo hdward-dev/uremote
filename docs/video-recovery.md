@@ -1,0 +1,25 @@
+# Video loss recovery
+
+The host retains original SRTP ciphertext for NACK repair. It never rebuilds a packet with the same SRTP packet index and changed headers. The cache is private to each peer, bounded to 4096 packets / 8 MiB / 1.5 seconds, and cleared on close. Each cached packet can be retried at most three times, at least 80 ms apart. A bounded feedback queue and shared pacing budget (approximately 25% of configured video bitrate) limit repair traffic.
+
+Feedback is parsed only after SRTCP authentication succeeds. All Generic NACK PID/BLP blocks are decoded, including 16-bit wraparound. Matching uses the local video SSRC, not the diagnostic event stream index. PLI and FIR target the appropriate video track; duplicate requests are coalesced. The encoder starts each connection with an IDR and uses on-demand refresh rather than periodic IDRs. Authenticated PLI/FIR refreshes the requested encoder at most once every two seconds; peer connection, input, audio and other displays stay active. The current FFmpeg pipe backend restarts that encoder for a refresh rather than forcing a keyframe in place. With no periodic keyframes, recovery depends on receiver feedback and the bounded NACK cache; clients with missing feedback remain a compatibility risk.
+
+The installed SIPSorcery 10.0.16 diagnostic feedback model exposes only the first NACK block, hence the authenticated compound RTCP parser in VideoRecovery.cs. The library's receiver reorder buffer also drops certain out-of-order repairs. The local loss fixture therefore sends ordered NACKs with 15 ms delay, keeping strict complete-frame and decoder-error assertions. It simulates 0%, 1%, 3%, and 5% first-transmission loss; it is not evidence of WAN or official-client performance. Receiver buffer limitations remain relevant to our controller implementation.
+
+Run tests/URemote.Checks with --video-recovery and the path to an FFmpeg executable. The test uses synthetic video and real DTLS/SRTP/SRTCP sessions, verifies byte-exact ciphertext repairs and full FFmpeg decode, and covers cache lifetime, retry bounds, SSRC isolation, NACK blocks, PLI and FIR parsing. Official-client validation remains necessary.
+
+## Official Windows receiver comparison (2026-09-29)
+
+UU Windows 4.42.0.2770 in the authorized QEMU lab received the installed host for about nine minutes without a persistent freeze. At 1920x1080/60 it reported about 57–58 rendered FPS. This is a local user-mode NAT path with a software-decoding VM, not the user's WAN/device combination.
+
+A temporary QEMU packet relay then discarded first-transmission video packets while passing repairs unchanged. With 1% loss, 378 packets were deliberately discarded; the receiver stayed near 57 FPS. A second 60-second run introduced 3% first-transmission loss and 150 ms receive delay after a 10-second baseline: 1173 packets were discarded and the reported render rate remained near 57 FPS. Temporary redirectors and character backends were removed after each test. No packet payloads were written to disk. These bounded tests do not reproduce bandwidth starvation, arbitrary burst loss, remote relay behavior, or the user's hardware decoder.
+
+The user's WAN freeze is still unresolved. Diagnostics now report RTT derived from authenticated receiver reports, cache misses/expiry/retry throttling, queue overflow, and actual socket send errors. A successful socket send is not proof of remote receipt. Cache misses include entries already evicted or expired; they must not all be interpreted as delayed requests. Invalid or unavailable RTT is reported as unknown, not zero. No bitrate policy change was made based solely on the VM comparison.
+
+## Desktop quality stability (2026-09-30)
+
+Fixed-rate, static-image encoding reproduced periodic quality collapse without a network: the old ultrafast preset, half-second IDRs and 125 ms VBV caused a roughly 15 dB PSNR dip on a color-pattern fixture. A dense text fixture exposed worse dips even with a larger VBV when half-second IDRs remained enabled. The production encoder now uses veryfast, 500 ms VBV and keyint=infinite with scenecut disabled. VBV is a rate-control budget, not an added playback queue. Zerolatency, no B frames and the existing packet pacing remain in use. Sparse/initial IDRs can still be larger and take longer to transmit; frame size and WAN responsiveness must be checked in actual use.
+
+The production-encoder quality check feeds 720 static 1080p frames, verifies an initial IDR with no periodic IDRs, and decodes the entire output with FFmpeg. A separate dense-text 12-second fixture remains stable after its initial refinement. Synthetic moving-pattern throughput on this machine measured about 245 FPS at 1080p and 149 FPS at 1440p with two encoder threads; these are offline encoder measurements, not end-to-end remote FPS. Existing 0/1/3/5 percent loss and PLI/FIR recovery tests passed. The adaptive bitrate controller still restarts the encoder when it changes the bitrate, so occasional quality transitions during adaptation remain possible.
+
+Run `tests/URemote.Checks --video-quality-checks <ffmpeg-path>` for the production encoder check.

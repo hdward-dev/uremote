@@ -42,9 +42,10 @@ public sealed class UuMacHostApi : IDisposable
         if (State.DeviceId.Length > 0) throw new InvalidOperationException("This identity is already initialized.");
         if (string.IsNullOrWhiteSpace(profile.ClientId) || profile.ClientId != State.ClientId || string.IsNullOrWhiteSpace(profile.SystemId))
             throw new ArgumentException("A matching independently generated identity is required.");
-        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v1/device/macos/init", JsonSerializer.Serialize(profile, Json));
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, HostWirePlatform.InitPath, HostWirePlatform.SerializeProfile(profile, false, Json));
         using var doc = await SendAsync(request, ct);
         var data = doc.RootElement.GetProperty("data");
+        ValidateRegisteredPlatform(data);
         if (!data.TryGetProperty("device_id", out var field) || field.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(field.GetString()))
             throw new InvalidDataException("Initialization did not return a device identity.");
         State = State with { DeviceId = field.GetString()! };
@@ -54,10 +55,18 @@ public sealed class UuMacHostApi : IDisposable
     {
         RequireInitialized();
         if (profile.ClientId != State.ClientId || string.IsNullOrWhiteSpace(profile.SystemId)) throw new ArgumentException("Device identity mismatch.");
-        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v1/device/macos/init", JsonSerializer.Serialize(profile, Json));
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, HostWirePlatform.InitPath, HostWirePlatform.SerializeProfile(profile, true, Json));
         using var doc = await SendAsync(request, ct);
+        ValidateRegisteredPlatform(doc.RootElement.GetProperty("data"));
         if (doc.RootElement.GetProperty("data").GetProperty("device_id").GetString() != State.DeviceId)
             throw new InvalidOperationException("Metadata refresh returned a different device identity.");
+    }
+
+    private static void ValidateRegisteredPlatform(JsonElement data)
+    {
+        if (HostWirePlatform.Windows && (!data.TryGetProperty("platform", out var platform)
+            || !platform.TryGetInt32(out var value) || value != 1))
+            throw new InvalidOperationException("Server did not register this host as a Windows device.");
     }
 
     public async Task<HostRoomConfiguration> CreateRoomAsync(long lastControlledInterval, CancellationToken ct = default)
@@ -155,7 +164,7 @@ public sealed class UuMacHostApi : IDisposable
     // Endpoint is present in the official Mac binary; field shape is verified against live server status.
     public async Task SetControllableAsync(bool enabled, CancellationToken ct = default)
     {
-        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v1/device/mac_controllable",
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, HostWirePlatform.ControllablePath,
             JsonSerializer.Serialize(new { controllable = enabled }));
         using var response = await SendAsync(request, ct);
     }

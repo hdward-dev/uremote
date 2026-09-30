@@ -4,7 +4,7 @@ using URemote.Linux;
 
 namespace URemote.Host;
 
-public sealed record SavedHostIdentity(LoginState State, HostDeviceProfile Profile, string Status)
+public sealed record SavedHostIdentity(LoginState State, HostDeviceProfile Profile, string Status, int Platform = 0)
 {
     public override string ToString() => "SavedHostIdentity(redacted)";
 }

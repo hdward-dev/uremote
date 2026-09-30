@@ -36,6 +36,18 @@ static class ControlInputTests
             && HostControlInput.Decode("CONTROL_DATA_CHANNEL", true, move) is null, "other channels and text frames cannot inject VINPUT");
         var key = Fixture("{\"action\":\"kbd_click\",\"key\":0}");
         check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, key)?.Key is { Action: KeyAction.Click, MacKey: 0 }, "Mac key zero is a valid A key, not a missing field");
+        check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, Fixture("{\"action\":\"kbd_press\",\"key\":65,\"interrept\":true}"), displayCount: 1, windowsKeys: true)?.Key is { Action: KeyAction.Press, MacKey: 0 },
+            "Windows VK_A reaches Linux A through the physical-key normalization");
+        check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, key, displayCount: 1, windowsKeys: true) is null,
+            "Windows reserved key zero cannot inject Mac A");
+        check(WindowsVirtualKeys.ToMac(162) == 59 && WindowsVirtualKeys.ToMac(163) == 62
+            && WindowsVirtualKeys.ToMac(160) == 56 && WindowsVirtualKeys.ToMac(161) == 60
+            && WindowsVirtualKeys.ToMac(91) == 55 && WindowsVirtualKeys.ToMac(92) == 54,
+            "Windows modifiers preserve left/right Control, Shift and Super");
+        check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, move, displayCount: 1, windowsKeys: true)?.Mouse is { X: 0.5, Y: 0.25 },
+            "Windows desktop input retains normalized pointer coordinates");
+        check(WindowsVirtualKeys.ToMac(96) is { } keypad && WaylandVirtualKeyboard.LinuxKey(keypad) == 82,
+            "Windows keypad zero reaches the keypad physical key");
         check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, Fixture("{\"action\":\"kbd_click\",\"key\":0}", 0x18, 1)) is null,
             "a different display cannot route keyboard input");
         check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, Fixture("{\"action\":\"kbd_click\",\"key\":0}", 0x08, 1)) is null,

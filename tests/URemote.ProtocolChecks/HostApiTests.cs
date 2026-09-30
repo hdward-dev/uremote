@@ -39,6 +39,14 @@ static class HostApiTests
         using var refreshApi = new UuMacHostApi(loginApi.State, refreshHandler);
         await refreshApi.RefreshDeviceProfileAsync(profile);
         check(refreshApi.State == loginApi.State, "device metadata refresh retains account token and device identity");
+        using var wrongPlatformHandler = new HostInitHandler(refresh: true, platform: 4);
+        using var wrongPlatformApi = new UuMacHostApi(loginApi.State, wrongPlatformHandler);
+        try { await wrongPlatformApi.RefreshDeviceProfileAsync(profile); check(false, "a Mac server response cannot be mistaken for Windows migration"); }
+        catch (InvalidOperationException) { check(true, "a Mac server response cannot be mistaken for Windows migration"); }
+        using var changedIdentityHandler = new HostInitHandler(refresh: true, device: "different-device");
+        using var changedIdentityApi = new UuMacHostApi(loginApi.State, changedIdentityHandler);
+        try { await changedIdentityApi.RefreshDeviceProfileAsync(profile); check(false, "platform migration cannot silently replace the saved device identity"); }
+        catch (InvalidOperationException) { check(changedIdentityApi.State == loginApi.State, "platform migration cannot silently replace the saved device identity"); }
         using var assistanceHandler = new AssistanceHandler();
         using var assistanceApi = new UuMacHostApi(loginApi.State, assistanceHandler);
         var device = loginApi.State.DeviceId;
@@ -89,7 +97,7 @@ static class HostApiTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.Headers.Authorization?.Parameter != "fixture-token") throw new Exception("Missing host authorization.");
-            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/api/v1/device/mac_controllable")
+            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/api/v1/device/controllable")
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Enabled = body.RootElement.GetProperty("controllable").GetBoolean();
@@ -114,7 +122,7 @@ static class HostApiTests
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
             var data = body.RootElement;
             if (request.Method != HttpMethod.Post || request.Headers.GetValues("X-Param-device-id").Single() != "fixture-device"
-                || request.Headers.GetValues("X-Param-PLAT").Single() != "4" || data.GetProperty("mobile").GetString() != "15500000000"
+                || request.Headers.GetValues("X-Param-PLAT").Single() != "1" || data.GetProperty("mobile").GetString() != "15500000000"
                 || data.GetProperty("country_code").GetString() != "86") throw new Exception("Invalid host login request.");
             var codeRequest = request.RequestUri!.AbsolutePath == "/api/v1/security/mobile/code";
             if (codeRequest && data.GetProperty("type").GetString() != "login") throw new Exception("Invalid SMS type.");
@@ -125,26 +133,28 @@ static class HostApiTests
         }
     }
 
-    private sealed class HostInitHandler(bool refresh = false) : HttpMessageHandler
+    private sealed class HostInitHandler(bool refresh = false, int platform = 1, string device = "fixture-device") : HttpMessageHandler
     {
         public int Requests { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Requests++;
-            if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/api/v1/device/macos/init"
-                || (refresh ? request.Headers.Authorization?.Parameter != "fixture-token" : request.Headers.Authorization is not null) || request.Headers.GetValues("X-Param-PLAT").Single() != "4")
+            if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/api/v1/device/windows/init"
+                || (refresh ? request.Headers.Authorization?.Parameter != "fixture-token" : request.Headers.Authorization is not null) || request.Headers.GetValues("X-Param-PLAT").Single() != "1")
                 throw new Exception("Invalid initialization request.");
             var body = await request.Content!.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            if (root.EnumerateObject().Count() != 15 || root.GetProperty("client_id").GetString() != "fixture-client"
+            if (root.EnumerateObject().Count() != 13 || root.GetProperty("client_id").GetString() != "fixture-client"
                 || root.GetProperty("system_id").GetString() != "fixture-system" || root.GetProperty("video").ValueKind != JsonValueKind.Array
-                || root.GetProperty("dpi").GetInt32() != 96 || root.GetProperty("mac").GetString() != "")
+                || root.GetProperty("memory").GetInt64() != 1000 || root.GetProperty("platform").GetInt32() != 1
+                || root.GetProperty("os").GetString() != "fixture-version" || root.GetProperty("machine_guid").GetString() != "fixture-system"
+                || root.GetProperty("controllable").GetBoolean() != refresh || root.GetProperty("mac").GetString() != "")
                 throw new Exception("Invalid DeviceInfo schema.");
             var headers = request.Headers.ToDictionary(x => x.Key, x => string.Join(",", x.Value));
             if (UuSigning.ComputeSignature(headers, "POST", request.RequestUri.AbsolutePath, body) != request.Headers.GetValues("X-Param-SIGN").Single())
                 throw new Exception("Signature does not cover transmitted bytes.");
-            return new(HttpStatusCode.OK) { Content = new StringContent("{\"code\":0,\"data\":{\"device_id\":\"fixture-device\"}}") };
+            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { code = 0, data = new { device_id = device, platform } })) };
         }
     }
 }

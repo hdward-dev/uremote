@@ -35,7 +35,12 @@ public sealed class WaylandVirtualKeyboard : IAsyncDisposable
         (101,67,"F9","F9"),(103,87,"F11","F11"),(109,68,"F10","F10"),(111,88,"F12","F12"),
         (114,110,"Insert","Insert"),(115,102,"Home","Home"),(116,104,"Prior","Prior"),(117,111,"Delete","Delete"),
         (118,62,"F4","F4"),(119,107,"End","End"),(120,60,"F2","F2"),(121,109,"Next","Next"),(122,59,"F1","F1"),
-        (123,105,"Left","Left"),(124,106,"Right","Right"),(125,108,"Down","Down"),(126,103,"Up","Up")
+        (123,105,"Left","Left"),(124,106,"Right","Right"),(125,108,"Down","Down"),(126,103,"Up","Up"),
+        (82,82,"KP_0","KP_0"),(83,79,"KP_1","KP_1"),(84,80,"KP_2","KP_2"),(85,81,"KP_3","KP_3"),
+        (86,75,"KP_4","KP_4"),(87,76,"KP_5","KP_5"),(88,77,"KP_6","KP_6"),(89,71,"KP_7","KP_7"),
+        (91,72,"KP_8","KP_8"),(92,73,"KP_9","KP_9"),(65,83,"KP_Decimal","KP_Decimal"),
+        (67,55,"KP_Multiply","KP_Multiply"),(69,78,"KP_Add","KP_Add"),(71,69,"Num_Lock","Num_Lock"),
+        (75,98,"KP_Divide","KP_Divide"),(76,96,"KP_Enter","KP_Enter"),(78,74,"KP_Subtract","KP_Subtract")
     ];
     public static uint? LinuxKey(int mac) => Keys.Where(k => k.Mac == mac).Select(k => (uint?)k.Linux).FirstOrDefault();
     public static string Keymap()
