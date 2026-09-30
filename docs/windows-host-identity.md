@@ -15,4 +15,4 @@ The server assigns a different device ID when moving an existing Mac identity to
 
 Windows virtual key codes are normalized to the existing Wayland physical-key backend. Pointer coordinates remain normalized, as used by our controller against Windows. Registration/signed requests and key routing have offline coverage; live compatibility must also be checked with official controllers.
 
-`UREMOTE_HOST_PLATFORM=mac` preserves the previous host API and keyboard interpretation as a diagnostic rollback option. Existing installations default to `mac`; enable `UREMOTE_HOST_PLATFORM=windows` only with a freshly authenticated Windows identity. The historical API class names remain for binary compatibility.
+`UREMOTE_HOST_PLATFORM=mac` preserves the previous host API and keyboard interpretation as a diagnostic rollback option. Builds default to `windows` when the variable is absent or empty; the installed launcher is no longer required to select the correct platform. Existing Mac identities still require the explicit fresh-login migration described above; changing this default does not migrate their tokens. The historical API class names remain for binary compatibility.

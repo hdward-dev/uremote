@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using URemote.Core;
 using URemote.Probe;
 
-Environment.SetEnvironmentVariable("UREMOTE_HOST_PLATFORM", "windows");
+Environment.SetEnvironmentVariable("UREMOTE_HOST_PLATFORM", null);
 var passed = 0;
 ConnectionInfoChecks.Run();
 void Check(bool condition, string label)
@@ -19,6 +19,8 @@ void Reject(Action action, string label)
     { Check(true, label); return; }
     throw new Exception("FAIL: " + label);
 }
+Check(HostWirePlatform.Windows && HostWirePlatform.ResolveWindows("") && HostWirePlatform.ResolveWindows("windows"), "release defaults to Windows without launcher environment overrides");
+Check(!HostWirePlatform.ResolveWindows("mac"), "explicit Mac diagnostic override remains available");
 var bundle = new BundledIceCandidates("v=0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:1\r\n");
 var bundledCandidate = new JsonObject { ["candidate"] = "fixture", ["sdpMLineIndex"] = 1, ["sdpMid"] = "1" };
 Check(bundle.Normalize(bundledCandidate)["sdpMLineIndex"]!.GetValue<int>() == 0 && bundledCandidate["sdpMLineIndex"]!.GetValue<int>() == 1, "bundled candidates map to shared transport without mutating signal data");

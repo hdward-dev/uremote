@@ -7,10 +7,11 @@ namespace URemote.Core;
 // The mac override is a rollback path for existing installations, not a second identity.
 public static class HostWirePlatform
 {
-    public static bool Windows { get; } = Environment.GetEnvironmentVariable("UREMOTE_HOST_PLATFORM") switch
+    public static bool Windows { get; } = ResolveWindows(Environment.GetEnvironmentVariable("UREMOTE_HOST_PLATFORM"));
+    public static bool ResolveWindows(string? value) => value switch
     {
-        "windows" => true,
-        null or "" or "mac" => false,
+        null or "" or "windows" => true,
+        "mac" => false,
         _ => throw new InvalidOperationException("UREMOTE_HOST_PLATFORM must be windows or mac.")
     };
     public static string InitPath => Windows ? "/api/v1/device/windows/init" : "/api/v1/device/macos/init";

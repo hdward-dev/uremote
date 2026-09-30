@@ -33,6 +33,8 @@ public static class DesktopHostSession
             UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
         var identity = ReadIdentity(identityPath);
         if (!identity.State.IsAuthenticated) throw new InvalidOperationException("请先登录。");
+        if (HostWirePlatform.Windows && identity.Platform != 1)
+            throw new InvalidOperationException("当前保存的是旧平台身份，请先迁移并重新登录 Windows 设备身份；旧令牌不会自动转换。");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (duration != Timeout.InfiniteTimeSpan) deadline.CancelAfter(duration);
         using var api = new UuMacHostApi(identity.State);
