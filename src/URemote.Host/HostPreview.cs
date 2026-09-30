@@ -19,7 +19,8 @@ public static class HostPreview
             var f = await WaylandScreenCapture.CaptureAsync(output, ct: ct);
             dimensions.Add(((int)f.Width, (int)f.Height)); Array.Clear(f.Pixels);
         }
-        var profiles = new HostVideoSettings(dimensions.ToArray());
+        var frameRateLimits = await ReadFrameRateLimitsAsync(outputs, report, ct);
+        var profiles = new HostVideoSettings(dimensions.ToArray(), frameRateLimits: frameRateLimits);
         var sessions = new HostSignalSessions();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = stop.Token;
@@ -106,6 +107,18 @@ public static class HostPreview
                     catch (Exception e) when (e is HttpRequestException or InvalidDataException or TimeoutException) { report("assistance-challenge-failed"); }
                     continue;
                 }
+                if (frame.Packet?.Data is JsonArray settingPacket && settingPacket.Count > 1 && settingPacket[1] is JsonObject settingObject)
+                {
+                    JsonObject? remoteCapability = (settingObject["data"] as JsonObject)?["device_capability"] as JsonObject;
+                    if (settingObject["streamer_data"] is JsonValue streamerValue && streamerValue.TryGetValue<string>(out var streamerJson) && streamerJson.Length <= 65536)
+                        try { remoteCapability = (JsonNode.Parse(streamerJson) as JsonObject)?["device_capability"] as JsonObject; } catch (System.Text.Json.JsonException) { }
+                    if (remoteCapability?["video_codec_capability"] is JsonArray remoteCodecs)
+                        foreach (var codec in remoteCodecs.Take(32).OfType<JsonObject>())
+                        {
+                            string Number(string key) => codec[key] is JsonValue value && value.TryGetValue<int>(out var number) ? number.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unknown";
+                            report($"controller-codec-capability codec={Number("video_codec")} size={Number("width")}x{Number("height")} chroma={Number("chroma_sampling")} depth={Number("bit_depth")} implementation={Number("codec_impl")}");
+                        }
+                }
                 HostSignalUpdate update;
                 try { update = sessions.Accept(frame); }
                 catch (FormatException e)
@@ -141,7 +154,8 @@ public static class HostPreview
                         var platform = request["controller_platform"]?.ToJsonString();
                         report("controller-platform=" + (int.TryParse(platform, out var platformCode) ? platformCode : -1));
                         var mobileSingleStream = !terminal && (update.Peer.Options.ClientType == 1 || platformCode == 3);
-                        profiles = new HostVideoSettings(dimensions.ToArray(), mobileSingleStream);
+                        frameRateLimits = await ReadFrameRateLimitsAsync(outputs, report, token);
+                        profiles = new HostVideoSettings(dimensions.ToArray(), mobileSingleStream, frameRateLimits);
                         report("video-routing=" + (mobileSingleStream ? "selected-screen-on-primary-track" : "independent-screen-tracks"));
                         Volatile.Write(ref answered, false);
                         active = id;
@@ -223,7 +237,7 @@ public static class HostPreview
                             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                         _ = video.ContinueWith(PeerFailed, CancellationToken.None,
                             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-                        await signal.SendEventAsync("forward_setting", Capability(id, dimensions), ct: token);
+                        await signal.SendEventAsync("forward_setting", Capability(id, dimensions, frameRateLimits), ct: token);
                         await signal.SendEventAsync("forward_setting", new JsonObject
                         {
                             ["client_id"] = id.ClientId,
@@ -233,7 +247,7 @@ public static class HostPreview
                                 ["signal_app_data"] = new JsonObject { ["ice_id"] = id.IceId,
                                     ["binary_data"] = new JsonObject { ["_placeholder"] = true, ["num"] = 0 } }
                             }
-                        }, [HostDisplayInfo.Encode(1, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), outputs.Count, dimensions, mobileSingleStream)], ct: token);
+                        }, [HostDisplayInfo.Encode(1, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), outputs.Count, dimensions, mobileSingleStream, frameRateLimits)], ct: token);
                         report("display-list-sent");
                         report(enableInput ? "viewer-requested; keyboard-mouse-enabled" : "viewer-requested; input-disabled");
                         break;
@@ -409,7 +423,22 @@ public static class HostPreview
         return result;
     }
 
-    private static JsonObject Capability(HostPeerId id, IReadOnlyList<(int Width, int Height)> dimensions) => new()
+    private static async Task<int[]> ReadFrameRateLimitsAsync(IReadOnlyList<uint> outputs, Action<string> report, CancellationToken ct)
+    {
+        IReadOnlyDictionary<uint, int> rates;
+        try { rates = await WaylandOutputRefresh.ReadAsync(ct); }
+        catch (Exception e) when (!ct.IsCancellationRequested && e is IOException or System.Net.Sockets.SocketException or OperationCanceledException or FormatException)
+        { rates = new Dictionary<uint, int>(); report("display-refresh-unavailable;fallback-fps=60"); }
+        return outputs.Select((output, index) =>
+        {
+            var milliHz = rates.GetValueOrDefault(output);
+            var limit = HostDisplayInfo.FrameRateLimit(milliHz);
+            report($"display-frame-rate;screen={index + 1};refresh-millihz={milliHz};max-fps={limit}");
+            return limit;
+        }).ToArray();
+    }
+
+    private static JsonObject Capability(HostPeerId id, IReadOnlyList<(int Width, int Height)> dimensions, IReadOnlyList<int> frameRateLimits) => new()
     {
         ["client_id"] = id.ClientId,
         ["data"] = new JsonObject
@@ -419,9 +448,12 @@ public static class HostPreview
             {
                 ["ice_id"] = id.IceId,
                 ["display_info"] = new JsonArray(Enumerable.Range(0, dimensions.Count).Select(index => (JsonNode)new JsonObject
-                    { ["id"] = index, ["fps"] = HostDisplayInfo.MaxSupportedFps, ["type"] = 0, ["hdr"] = -1 }).ToArray()),
+                    { ["id"] = index, ["fps"] = frameRateLimits[index], ["type"] = 0, ["hdr"] = -1 }).ToArray()),
+                // This is the encoder's supported size, not the currently attached screen size.
+                // Native clients intersect it with their decoder capability to enable quality tiers.
+                // libx264 supports 4K H264 4:2:0 8-bit; no hardware, H265 or HDR is advertised.
                 ["video_codec_capability"] = new JsonArray(new JsonObject { ["video_codec"] = 1,
-                    ["width"] = dimensions.Max(x => x.Width), ["height"] = dimensions.Max(x => x.Height), ["chroma_sampling"] = 1, ["bit_depth"] = 8, ["codec_impl"] = -1 })
+                    ["width"] = 3840, ["height"] = 2160, ["chroma_sampling"] = 1, ["bit_depth"] = 8, ["codec_impl"] = -1 })
             }
         }
     };

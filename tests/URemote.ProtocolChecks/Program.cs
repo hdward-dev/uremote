@@ -87,6 +87,13 @@ var controllerOptions = StreamerConnectOptions.Decode(ControllerProtocol.Connect
 Check(controllerOptions.CaptureType == 1 && controllerOptions.ClientType == 4 && controllerOptions.DeviceId == "fixture-controller"
     && controllerOptions.DecoderCapabilities.Single().CodecType == 1, "native controller H264 capabilities and Mac identity wire options");
 Check(HostControlEcho.Reply(ControllerProtocol.Echo(7), 8, 9, true) is not null, "native controller heartbeat is accepted by host protocol");
+// Captured numeric shape: selected tier=144 while legacy explicit field stays at 60.
+byte[] frameRateRequest = [0xaa,0x01,0x0b,0x0a,0x02,0x08,0x01,0x12,0x05,0x08,0x04,0x90,0x01,0x3c];
+Check(HostCaptureProtocol.Decode(frameRateRequest)?.Fps == 144, "selected 144 tier overrides stale explicit 60 FPS");
+frameRateRequest[10] = 2; frameRateRequest[13] = 120;
+Check(HostCaptureProtocol.Decode(frameRateRequest)?.Fps == 60, "selected lower tier overrides a higher explicit FPS");
+frameRateRequest[10] = 0;
+Check(HostCaptureProtocol.Decode(frameRateRequest)?.Fps == 120, "explicit FPS remains usable when no standard tier is selected");
 var controllerCapture = HostCaptureProtocol.Decode(ControllerProtocol.Capture(2, 1));
 Check(controllerCapture is { Screen: 1, Quality: 3, Fps: 60 }, "native controller screen selection routes to requested display");
 var state = new LoginState("fixture-token", "fixture-user", "fixture-client", "fixture-device");

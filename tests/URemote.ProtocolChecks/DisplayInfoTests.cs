@@ -11,6 +11,14 @@ static class DisplayInfoTests
             && screens[1].Single(f => f.Tag == 12).Value == 1
             && screens[0].Single(f => f.Tag == 1).Value == 0 && screens[1].Single(f => f.Tag == 1).Value == 1,
             "each advertised screen references its distinct videoTrackIndex (field 12)");
+        check(screens.All(s => s.Single(f => f.Tag == 2).Value == 144), "screen capabilities advertise 144 FPS encoding support");
+        check(HostDisplayInfo.FrameRateLimit(120000) == 120 && HostDisplayInfo.FrameRateLimit(59940) == 60
+            && HostDisplayInfo.FrameRateLimit(240000) == 144 && HostDisplayInfo.FrameRateLimit(0) == 60,
+            "refresh limits handle fractional rates, encoder ceiling and unknown refresh");
+        var capped = Fields(Fields(HostDisplayInfo.Encode(1,2,2,frameRateLimits: [120,60])).Single(f => f.Tag == 7).Bytes)
+            .Where(f => f.Tag == 1).Select(f => Fields(f.Bytes)).ToArray();
+        check(capped[0].Single(f => f.Tag == 2).Value == 120 && capped[1].Single(f => f.Tag == 2).Value == 60,
+            "screen list advertises each output's active frame rate limit");
         var mobile = Fields(Fields(HostDisplayInfo.Encode(1, 2, 2, singleVideoStream: true)).Single(f => f.Tag == 7).Bytes)
             .Where(f => f.Tag == 1).Select(f => Fields(f.Bytes)).ToArray();
         check(mobile.Length == 2 && mobile.All(s => s.Single(f => f.Tag == 12).Value == 0)

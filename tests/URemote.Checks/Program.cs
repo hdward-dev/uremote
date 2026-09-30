@@ -82,14 +82,75 @@ if (args.Contains("--pty-only"))
 }
 
 void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS: " + name); }
-if (args.Contains("--video-quality-checks"))
+if (args.Contains("--video-4k-checks"))
 {
-    await QualityChecks.RunAsync(args.Last());
+    await QualityChecks.RunAsync(args.Last(), 30, 3840, 2160, 60);
+    return;
+}
+if (args.Contains("--video-quality-checks") || args.Contains("--video-144-checks"))
+{
+    await QualityChecks.RunAsync(args.Last(), args.Contains("--video-144-checks") ? 144 : 60);
+    return;
+}
+if (args.Contains("--display-refresh-checks"))
+{
+    foreach (var item in await URemote.Linux.WaylandOutputRefresh.ReadAsync())
+        Console.WriteLine($"output={item.Key};refresh-millihz={item.Value};fps-limit={HostDisplayInfo.FrameRateLimit(item.Value)}");
     return;
 }
 if (args.Contains("--video-loss-checks"))
 {
 
+// The current Windows menu names differ from the legacy protocol enum names.
+var qualityProfiles = new HostVideoSettings([(1920,1080),(2560,1440)], frameRateLimits: [120,60]);
+foreach (var (quality, bitrate, crf) in new[] { (2,8000000,23), (3,14000000,18), (4,30000000,14) })
+{
+    Check(qualityProfiles.Apply(new(-2,-1,-1,144,quality,1,0,1))
+        && qualityProfiles.Get(0) is { Width:1920, Height:1080, Fps:120 }
+        && qualityProfiles.Get(1) is { Width:2560, Height:1440, Fps:60 }
+        && qualityProfiles.Get(0).Bitrate == bitrate && qualityProfiles.Get(1).Bitrate == bitrate
+        && qualityProfiles.Get(0).Crf == crf,
+        $"manual quality {quality} immediately uses its budget without a startup clamp or display/FPS changes");
+}
+qualityProfiles.Apply(new(-1,0,0,0,5,1,0,1,AutoQuality:3));
+Check(qualityProfiles.Get(0) is { Bitrate:14000000, Crf:18 }, "automatic quality honors client-selected Ultra target");
+qualityProfiles.Apply(new(-1,0,0,30,0,1,0,1));
+Check(qualityProfiles.Get(0) is { Bitrate:14000000, Crf:18, Fps:30 }, "FPS-only update preserves automatic target");
+qualityProfiles.Apply(new(-1,0,0,0,6,1,0,1,CustomBitrate:18000000));
+Check(qualityProfiles.Get(0).Bitrate == 18000000, "custom bitrate is used in bits per second");
+qualityProfiles.Apply(new(-1,0,0,60,0,1,0,1));
+Check(qualityProfiles.Get(0).Bitrate == 18000000, "FPS update preserves custom bitrate");
+var beforeInvalid = qualityProfiles.Get(0);
+Check(!qualityProfiles.Apply(new(-1,0,0,0,6,1,0,1,CustomBitrate:40000001))
+    && qualityProfiles.Get(0) == beforeInvalid, "unsupported custom bitrate is rejected without altering profile");
+qualityProfiles.Apply(new(-1,0,0,0,4,1,0,1));
+qualityProfiles.ObserveReceiver(1000,100,60);
+var limitedRate = qualityProfiles.Get(0).Bitrate;
+qualityProfiles.Apply(new(-1,0,0,0,4,1,0,1));
+Check(limitedRate < 30000000 && qualityProfiles.Get(0).Bitrate == limitedRate,
+    "manual quality requests do not bypass a measured congestion ceiling");
+for (var n = 1; n <= 20; n++) qualityProfiles.ObserveReceiver(1000 + n*1000,100,60+n*60);
+Check(qualityProfiles.Get(0).Bitrate == 30000000, "healthy feedback restores the selected Original budget");
+// Minimal synthetic RPC capture request: custom=18 Mbps and auto target=Original.
+var qualityRequest = HostCaptureProtocol.Decode(FileTransferProtocol.Blob(21,
+    FileTransferProtocol.Join(FileTransferProtocol.Blob(1,FileTransferProtocol.Int(1,1)),
+        FileTransferProtocol.Blob(2,FileTransferProtocol.Join(FileTransferProtocol.Int(2,6),
+            FileTransferProtocol.Int(8,18000000),FileTransferProtocol.Int(12,4))))));
+Check(qualityRequest is { Quality:6, CustomBitrate:18000000, AutoQuality:4 },
+    "capture RPC decodes custom bitrate and automatic target independently");
+
+var mixedRates = new HostVideoSettings([(1920,1080),(1920,1080)], frameRateLimits: [120,60]);
+Check(mixedRates.Apply(new(-1,0,0,144,5,0,0,null)) && mixedRates.Get(0).Fps == 120 && mixedRates.Get(1).Fps == 60,
+    "144 FPS request is capped independently by each active screen refresh rate");
+Check(mixedRates.Apply(new(-1,0,0,30,5,0,0,null)) && mixedRates.Get(0).Fps == 30 && mixedRates.Get(1).Fps == 30,
+    "lower requested FPS is preserved on high-refresh screens");
+var mobileRates = new HostVideoSettings([(1920,1080),(1920,1080)], true, [120,60]);
+mobileRates.Apply(new(1,0,0,144,5,0,0,null));
+Check(mobileRates.SelectedScreen == 1 && mobileRates.Get(1).Fps == 60, "mobile display switching preserves the selected display FPS ceiling");
+var highRate = new HostVideoSettings([(1920,1080)]);
+Check(highRate.Apply(new(0,1920,1080,144,5,0,0,null)) && highRate.Get(0).Fps == 144, "144 FPS request reaches video profile without a 60 FPS clamp");
+Check(highRate.Apply(new(0,1920,1080,120,5,0,0,null)) && highRate.Get(0).Fps == 120, "explicit 120 FPS remains supported");
+Check(highRate.Apply(new(0,1920,1080,240,5,0,0,null)) && highRate.Get(0).Fps == 144, "requests above supported range are bounded");
 var congested = new HostVideoSettings([(1920, 1080)]);
 var beforeLoss = congested.Get(0);
 Check(congested.ObserveReceiver(15079, 1325, 19), "receiver packet loss triggers recovery");

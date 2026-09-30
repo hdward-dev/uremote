@@ -51,7 +51,7 @@ internal static class HostInput
                             && received.TryGetInt64(out var receivedCount) && lost.TryGetInt64(out var lostCount)
                             && decoded.TryGetInt64(out var decodedCount)
                             && profiles?.ObserveReceiver(receivedCount, lostCount, decodedCount) == true)
-                            report("video-network-adjustment;bitrate=" + profiles.Get(profiles.SelectedScreen).Bitrate);
+                            report("video-network-adjustment;" + profiles.Describe(profiles.SelectedScreen));
                     }
                     continue;
                 }
@@ -71,6 +71,10 @@ internal static class HostInput
                     var accepted = profiles.Apply(update);
                     report("capture-values=" + HostCaptureProtocol.DescribeSettings(message.Bytes));
                     report($"capture-request;screen={update.Screen};width={update.Width};height={update.Height};fps={update.Fps};quality={update.Quality};accepted={accepted}");
+                    if (accepted)
+                        for (var screen = 0; screen < outputs.Count; screen++)
+                            if (update.Screen < 0 || update.Screen == screen)
+                                report($"video-quality-applied;screen={screen + 1};" + profiles.Describe(screen));
                     media.SendData(message.ChannelLabel, HostCaptureProtocol.Reply(update, accepted));
                     report(accepted ? "capture-settings-applied" : "capture-settings-rejected");
                     continue;

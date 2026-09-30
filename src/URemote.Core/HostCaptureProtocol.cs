@@ -1,5 +1,5 @@
 namespace URemote.Core;
-public sealed record CaptureUpdate(int Screen, int Width, int Height, int Fps, int Quality, ulong Sequence, int Flag, ulong? RpcId);
+public sealed record CaptureUpdate(int Screen, int Width, int Height, int Fps, int Quality, ulong Sequence, int Flag, ulong? RpcId, int CustomBitrate = 0, int AutoQuality = 0);
 public static class HostCaptureProtocol
 {
     // Restrict diagnostics to numeric capture settings; never log arbitrary channel payloads.
@@ -34,7 +34,7 @@ public static class HostCaptureProtocol
         if (rpc.Bytes(2) is { } capture)
         {
             var p = ProtoFields.Read(capture);
-            return new(p.Int(4), p.Int(5), p.Int(6), p.Int(18) > 0 ? p.Int(18) : Fps(p.Int(1)), p.Int(2), seq, 0, id);
+            return new(p.Int(4), p.Int(5), p.Int(6), p.Int(1) is >= 1 and <= 4 ? Fps(p.Int(1)) : p.Int(18) > 0 ? p.Int(18) : Fps(p.Int(1)), p.Int(2), seq, 0, id, p.Int(8), p.Int(12));
         }
         if (rpc.Bytes(3) is { } fps) return new(-1, 0, 0, Fps(ProtoFields.Read(fps).Int(1)), 0, seq, 0, id);
         if (rpc.Bytes(4) is { } quality) return new(-1, 0, 0, 0, ProtoFields.Read(quality).Int(1), seq, 0, id);

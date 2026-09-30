@@ -11,7 +11,7 @@ public sealed class StreamingH264Encoder : IAsyncDisposable
     private readonly int width, height;
     public StreamingH264Encoder(string executable, int width, int height, bool inverted, uint format, int fps = 30, int outputWidth = 1280, int outputHeight = 720, int bitrate = 4000000, int crf = 18)
     {
-        if (crf is < 0 or > 51 || outputWidth is < 2 or > 7680 || outputHeight is < 2 or > 4320 || bitrate is < 1000000 or > 40000000 || width is < 2 or > 16384 || height is < 2 or > 16384 || format > 1 || fps is < 1 or > 60)
+        if (crf is < 0 or > 51 || outputWidth is < 2 or > 7680 || outputHeight is < 2 or > 4320 || bitrate is < 1000000 or > 40000000 || width is < 2 or > 16384 || height is < 2 or > 16384 || format > 1 || fps is < 1 or > URemote.Core.HostDisplayInfo.MaxSupportedFps)
             throw new ArgumentException("Unsupported stream format.");
         this.width = width; this.height = height;
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardInput = true,
@@ -23,7 +23,7 @@ public sealed class StreamingH264Encoder : IAsyncDisposable
         string[] args = ["-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pixel_format", format == 1 ? "bgr0" : "bgra",
             "-video_size", $"{width}x{height}", "-framerate", fps.ToString(), "-i", "pipe:0", "-an",
             "-vf", (inverted ? "vflip," : "") + $"scale={outputWidth}:{outputHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear,pad={outputWidth}:{outputHeight}:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "baseline", "-level:v", "5.1",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "baseline", "-level:v", "5.2",
             "-pix_fmt", "yuv420p", "-crf", crf.ToString(), "-maxrate", bitrate.ToString(), "-bufsize", (bitrate / 2).ToString(),
             "-x264-params", "aud=1:repeat-headers=1:keyint=infinite:scenecut=0", "-threads", "2",
             "-flush_packets", "1", "-f", "h264", "pipe:1"];

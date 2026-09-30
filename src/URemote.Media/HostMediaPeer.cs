@@ -163,7 +163,7 @@ public sealed class HostMediaPeer : IDisposable
                     { new(AudioCodecsEnum.OPUS, 111, 48000, 2, "minptime=10;useinbandfec=1") }, enableAudio ? MediaStreamStatusEnum.SendOnly : MediaStreamStatusEnum.Inactive));
             else if (announcement.Media == SDPMediaTypesEnum.video)
                 peer.addTrack(new MediaStreamTrack(new List<VideoFormat>
-                    { new(VideoCodecsEnum.H264, 98, 90000, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e033") },
+                    { new(VideoCodecsEnum.H264, 98, 90000, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e034") },
                     peer.VideoStreamList.Count < activeVideoStreams ? MediaStreamStatusEnum.SendOnly : MediaStreamStatusEnum.Inactive));
         }
         var result = peer.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = offer });

@@ -4,8 +4,10 @@ namespace URemote.Core;
 // Uses physical screen dimensions; iOS switches sources on the primary video track.
 public static class HostDisplayInfo
 {
-    public const int MaxSupportedFps = 60;
-    public static byte[] Encode(ulong sequence, ulong timestamp, int displayCount = 1, IReadOnlyList<(int Width, int Height)>? dimensions = null, bool singleVideoStream = false)
+    public const int MaxSupportedFps = 144;
+    public static int FrameRateLimit(int refreshMilliHz) => refreshMilliHz > 0
+        ? Math.Clamp((int)Math.Round(refreshMilliHz / 1000.0), 1, MaxSupportedFps) : 60;
+    public static byte[] Encode(ulong sequence, ulong timestamp, int displayCount = 1, IReadOnlyList<(int Width, int Height)>? dimensions = null, bool singleVideoStream = false, IReadOnlyList<int>? frameRateLimits = null)
     {
         if (displayCount is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(displayCount));
         var list = new List<byte>();
@@ -15,7 +17,7 @@ public static class HostDisplayInfo
         var width = (ulong)(dimensions?[index].Width ?? 1280); var height = (ulong)(dimensions?[index].Height ?? 720);
         Int(rectangle, 3, width); Int(rectangle, 4, height); Int(rectangle, 5, width); Int(rectangle, 6, height);
         var screen = new List<byte>();
-        Int(screen, 1, (ulong)index); Int(screen, 2, MaxSupportedFps);
+        Int(screen, 1, (ulong)index); Int(screen, 2, (ulong)Math.Clamp(frameRateLimits?[index] ?? MaxSupportedFps, 1, MaxSupportedFps));
         Blob(screen, 3, rectangle.ToArray()); Blob(screen, 4, rectangle.ToArray()); Blob(screen, 6, rectangle.ToArray());
         Int(screen, 7, index == 0 ? 1u : 0u);
         Var(screen, (8 << 3) | 1); // IEEE double scale, little endian.
