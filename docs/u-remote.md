@@ -115,3 +115,19 @@ dotnet run --project tests/URemote.Checks -- --desktop-portal-check
 本机被控页面包含服务端分配的协助码、本机生成的 8 位临时验证码、显示/隐藏、复制和换码，以及独立的“允许远程协助”开关。开关状态保存到模块设置，关闭会撤销协助会话权限并更新验证码；同账号被控开关保持独立。临时验证码仅存在当前进程内存，重启后更换。协助请求的挑战响应已接入，官方客户端完整协助连接仍需联调验证。
 
 主控端桌面键鼠消息使用 CONTROL_DATA_CHANNEL 的原始 JSON 文本及 WebRTC String PPID，已通过本机加密回环检查；真实远端控制修复后的效果待用户确认。
+
+
+### niri 桌面快捷键与 uinput
+
+原生 Wayland 键盘路径可以向应用发送按键，但在本机 niri 26.04 上，Super+R / Super+Space 未触发桌面快捷键。现在原生后端优先使用有写权限的 `/dev/uinput`，通过内核虚拟键盘发送按下、松开事件；会话关闭释放按键并销毁设备，不读取物理键盘事件。没有权限时仍回退到 Wayland，KDE Portal 路径不变。日志只报告 `keyboard-backend=uinput/wayland/portal/disabled`，不记录键入内容。
+
+`UREMOTE_KEYBOARD_BACKEND=auto` 为默认值；`uinput` 强制使用内核后端，无权限时报错；`wayland` 用于诊断回退。uinput 权限允许该账号注入系统输入，应只授予运行星栈的可信账号，不要设置全用户可写权限。NixOS 可在系统配置中加入以下内容（将 `YOUR_USER` 替换为实际用户名），按正常 NixOS 流程应用配置：
+
+```nix
+boot.kernelModules = [ "uinput" ];
+services.udev.extraRules = ''
+  SUBSYSTEM=="misc", KERNEL=="uinput", OWNER="YOUR_USER", MODE="0600"
+'';
+```
+
+2026-10-01 本机实测：生产 uinput 后端发送 Super+R 后 niri 窗口宽度发生变化；Super+Space 打开 `dms:spotlight` 启动器。测试后恢复了窗口宽度并关闭启动器。此验证不代表所有合成器、布局或主控端快捷键捕获均已覆盖。

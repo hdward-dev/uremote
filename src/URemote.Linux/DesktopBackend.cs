@@ -55,7 +55,18 @@ public static class DesktopBackend
     public static async Task<IDesktopPointer> CreatePointerAsync(uint output, CancellationToken ct)
         => portal is { } active ? active.CreatePointer(output) : await WaylandVirtualPointer.CreateAsync(output, ct);
     public static async Task<IDesktopKeyboard> CreateKeyboardAsync(CancellationToken ct)
-        => portal is { } active ? active.CreateKeyboard() : await WaylandVirtualKeyboard.CreateAsync(ct);
+    {
+        if (portal is { } active) return active.CreateKeyboard();
+        var backend = Environment.GetEnvironmentVariable("UREMOTE_KEYBOARD_BACKEND") ?? "auto";
+        if (backend is not ("auto" or "uinput" or "wayland"))
+            throw new ArgumentException("UREMOTE_KEYBOARD_BACKEND must be auto, uinput or wayland.");
+        if (backend != "wayland")
+        {
+            try { return await UInputKeyboard.CreateAsync(ct); }
+            catch (UnauthorizedAccessException) when (backend == "auto") { }
+        }
+        return await WaylandVirtualKeyboard.CreateAsync(ct);
+    }
     public static Task<IReadOnlyDictionary<uint, int>> ReadRefreshRatesAsync(CancellationToken ct)
         => portal is not null ? Task.FromResult<IReadOnlyDictionary<uint, int>>(new Dictionary<uint, int>()) : WaylandOutputRefresh.ReadAsync(ct);
 
