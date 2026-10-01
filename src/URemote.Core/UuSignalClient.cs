@@ -16,6 +16,9 @@ public sealed class UuSignalClient : IAsyncDisposable
     private readonly Channel<UuSignalFrame> events = Channel.CreateBounded<UuSignalFrame>(128);
     private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? pump;
+    private Task? renewal;
+    public event Action<string>? Diagnostic;
+    private string? forcedCloseReason;
     private long nextId;
     private int opened;
     private int connected;
@@ -68,14 +71,56 @@ public sealed class UuSignalClient : IAsyncDisposable
 
     // Also supports an already connected in-memory transport for deterministic protocol tests.
     public static async Task<UuSignalClient> StartConnectedAsync(WebSocket transport, TimeSpan timeout,
-        CancellationToken ct = default)
+        CancellationToken ct = default, TimeSpan? refreshInterval = null)
     {
+        var interval = refreshInterval ?? TimeSpan.FromMinutes(5);
+        if (interval <= TimeSpan.Zero || interval > TimeSpan.FromMinutes(5))
+            throw new ArgumentOutOfRangeException(nameof(refreshInterval));
         if (transport.State != WebSocketState.Open || timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(1))
             throw new ArgumentException("An open transport and bounded handshake timeout are required.");
         var client = new UuSignalClient(transport, timeout);
         client.pump = client.ReceiveLoopAsync();
-        try { await client.ready.Task.WaitAsync(timeout, ct); return client; }
+        try
+        {
+            await client.ready.Task.WaitAsync(timeout, ct);
+            client.renewal = client.RenewReconnectKeyAsync(interval);
+            return client;
+        }
         catch { await client.DisposeAsync(); throw; }
+    }
+
+    // Official clients renew the signaling lease every 300 seconds in addition to Engine.IO pong.
+    // The returned key is a credential: validate it, but never include it in diagnostics.
+    public async Task RefreshReconnectKeyAsync(CancellationToken ct = default)
+    {
+        var frame = await EmitWithAckAsync("refresh_reconnect_key", null, TimeSpan.FromSeconds(10), ct);
+        if (frame.Packet?.Data is not JsonArray values || values.Count < 2
+            || values[0] is not JsonValue status || !status.TryGetValue<string>(out var result) || result != "success"
+            || values[1] is not JsonObject data || data["reconnect_key"] is not JsonValue keyValue
+            || !keyValue.TryGetValue<string>(out var key) || string.IsNullOrWhiteSpace(key) || key.Length > 65536)
+            throw new InvalidDataException("Signaling lease renewal was rejected.");
+        Diagnostic?.Invoke("signal-lease-renewed");
+    }
+
+    private async Task RenewReconnectKeyAsync(TimeSpan interval)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(interval, lifetime.Token);
+                await RefreshReconnectKeyAsync(lifetime.Token);
+            }
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (Exception e)
+        {
+            if (!lifetime.IsCancellationRequested)
+            {
+                forcedCloseReason = "lease-renewal-" + e.GetType().Name;
+                socket.Abort(); // ReceiveLoop owns termination and rejects all pending ACKs.
+            }
+        }
     }
 
     public Task<UuSignalFrame> GetRoomInfoAsync(CancellationToken ct = default) =>
@@ -148,6 +193,7 @@ public sealed class UuSignalClient : IAsyncDisposable
     private async Task ReceiveLoopAsync()
     {
         Exception? failure = null;
+        string? closeReason = null;
         var reader = new UuSignalReader();
         lastHeartbeat = DateTimeOffset.UtcNow;
         try
@@ -165,7 +211,11 @@ public sealed class UuSignalClient : IAsyncDisposable
                 do
                 {
                     received = await socket.ReceiveAsync(new ArraySegment<byte>(chunk), deadline.Token);
-                    if (received.MessageType == WebSocketMessageType.Close) throw new IOException("Signal server closed the connection.");
+                    if (received.MessageType == WebSocketMessageType.Close)
+                    {
+                        closeReason = "websocket-close-" + (int)(received.CloseStatus ?? WebSocketCloseStatus.Empty);
+                        throw new IOException("Signal server closed the connection.");
+                    }
                     if (type is not null && type != received.MessageType) throw new FormatException("Mixed WebSocket fragment types.");
                     type = received.MessageType;
                     if (message.Length + received.Count > UuSignalReader.MaximumBytes + 1)
@@ -192,7 +242,7 @@ public sealed class UuSignalClient : IAsyncDisposable
                         // Mirror ping payload, if present, as Engine.IO requires.
                         await SendControlAsync("3" + Encoding.UTF8.GetString(bytes)[1..], deadline.Token);
                         break;
-                    case 1: throw new IOException("Engine.IO connection closed.");
+                    case 1: closeReason = "engine-close"; throw new IOException("Engine.IO connection closed.");
                     case 4:
                         var packet = frame.Packet!;
                         if (packet.Namespace != "/") throw new FormatException("Unexpected Socket.IO namespace.");
@@ -202,7 +252,8 @@ public sealed class UuSignalClient : IAsyncDisposable
                                 throw new FormatException("Invalid namespace connection sequence.");
                             ready.TrySetResult();
                         }
-                        else if (packet.Type is 1 or 4) throw new IOException("UU namespace disconnected or rejected authorization.");
+                        else if (packet.Type is 1 or 4)
+                        { closeReason = "namespace-" + packet.Type; throw new IOException("UU namespace disconnected or rejected authorization."); }
                         else if (!IsConnected) throw new FormatException("Event before namespace connection.");
                         else if (packet.Type is 3 or 6)
                         {
@@ -219,6 +270,7 @@ public sealed class UuSignalClient : IAsyncDisposable
         catch (Exception e) { failure = e; }
         finally
         {
+            if (failure is not null) Diagnostic?.Invoke("signal-closed;reason=" + (forcedCloseReason ?? closeReason ?? failure.GetType().Name));
             Volatile.Write(ref connected, 0);
             lifetime.Cancel();
             socket.Abort();
@@ -242,6 +294,7 @@ public sealed class UuSignalClient : IAsyncDisposable
         lifetime.Cancel();
         socket.Abort();
         if (pump is not null) await pump;
+        if (renewal is not null) await renewal;
         socket.Dispose();
         // Keep synchronization objects valid for racing canceled callers; no native resources retained.
     }

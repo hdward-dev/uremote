@@ -123,15 +123,12 @@ public static class HostPreview
                 try { update = sessions.Accept(frame); }
                 catch (FormatException e)
                 {
-                    // Fail closed for the current peer, but keep the foreground listener available for a retry.
+                    // Reject this packet without allowing a malformed/stale notification to terminate another peer.
                     var field = e.Data["field"] as string;
                     var eventName = frame.Packet?.Data?[0]?.GetValue<string>();
                     report("rejected-event=" + (eventName is "soac" or "released" or "be-controlled" ? eventName : "other"));
                     report("signal-packet-rejected; field=" +
                         (field is "client_id" or "ice_id" or "app_control_id" or "type" or "sdp" ? field : "other"));
-                    await ClosePeerAsync();
-                    sessions.Reset();
-                    report("viewer-released");
                     continue;
                 }
                 switch (update.Action)

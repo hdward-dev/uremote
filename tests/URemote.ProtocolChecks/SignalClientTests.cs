@@ -54,6 +54,20 @@ static class SignalClientTests
         check((await afterClear).Packet?.Data?[0]?["publisher"]?["role"]?.GetValue<string>() == "publisher",
             "publisher can use the same room after disconnecting controller");
 
+        var refresh = client.RefreshReconnectKeyAsync();
+        var refreshPacket = SocketIoCodec.Parse((await transport.NextSent()).Text[1..]);
+        check(refreshPacket.Id is not null && refreshPacket.Data is JsonArray refreshArgs
+            && refreshArgs.Count == 1 && refreshArgs[0]?.GetValue<string>() == "refresh_reconnect_key",
+            "lease renewal matches official no-argument event with ACK");
+        transport.FeedText($"43{refreshPacket.Id}[\"success\",{{\"reconnect_key\":\"fixture-secret\"}}]");
+        await refresh;
+        check(client.IsConnected, "successful lease renewal preserves signaling connection");
+        var invalidRefresh = client.RefreshReconnectKeyAsync();
+        var invalidRefreshPacket = SocketIoCodec.Parse((await transport.NextSent()).Text[1..]);
+        transport.FeedText($"43{invalidRefreshPacket.Id}[\"success\",{{}}]");
+        try { await invalidRefresh; check(false, "empty renewal key rejected"); }
+        catch (InvalidDataException) { check(true, "empty renewal key rejected"); }
+
         var timedOut = client.EmitWithAckAsync("room_info", null, TimeSpan.FromMilliseconds(30));
         var latePacket = SocketIoCodec.Parse((await transport.NextSent()).Text[1..]);
         try { await timedOut; check(false, "ACK deadline enforced"); }
@@ -76,6 +90,31 @@ static class SignalClientTests
         await heartbeatClient.Completion.WaitAsync(TimeSpan.FromSeconds(2));
         try { await heartbeatClient.Events.Completion; check(false, "missing heartbeat closes connection"); }
         catch (TimeoutException) { check(!heartbeatClient.IsConnected, "missing heartbeat closes connection"); }
+
+        using var renewalTransport = new TestWebSocket();
+        var renewalStarting = UuSignalClient.StartConnectedAsync(renewalTransport, TimeSpan.FromSeconds(2),
+            refreshInterval: TimeSpan.FromMilliseconds(40));
+        renewalTransport.FeedText("0{\"pingInterval\":15000,\"pingTimeout\":18000}");
+        await renewalTransport.NextSent();
+        renewalTransport.FeedText("40{}");
+        var renewalClient = await renewalStarting;
+        var diagnostics = new List<string>();
+        renewalClient.Diagnostic += diagnostics.Add;
+        for (var i = 0; i < 3; i++)
+        {
+            var automaticRefresh = SocketIoCodec.Parse((await renewalTransport.NextSent()).Text[1..]);
+            check(automaticRefresh.Data?[0]?.GetValue<string>() == "refresh_reconnect_key",
+                "automatic lease renewal repeats without user input");
+            renewalTransport.FeedText($"43{automaticRefresh.Id}[\"success\",{{\"reconnect_key\":\"fixture-secret\"}}]");
+            // A pong after the ACK confirms the receive pump processed both, without relying on sleeps.
+            renewalTransport.FeedText("2");
+            check((await renewalTransport.NextSent()).Text == "3", "heartbeat remains independent of renewal");
+        }
+        await renewalClient.DisposeAsync();
+        check(diagnostics.Count(x => x == "signal-lease-renewed") == 3
+            && diagnostics.All(x => !x.Contains("fixture-secret")), "renewal diagnostics never expose keys");
+        check(!renewalClient.IsConnected && renewalClient.Completion.IsCompleted,
+            "disposal stops periodic renewal with the receive pump");
 
         using var invalidTransport = new TestWebSocket();
         var invalidStarting = UuSignalClient.StartConnectedAsync(invalidTransport, TimeSpan.FromSeconds(2));

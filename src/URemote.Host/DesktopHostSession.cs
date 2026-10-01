@@ -75,9 +75,11 @@ public static class DesktopHostSession
             }
             var room = await api.CreateRoomAsync(0, deadline.Token);
             await using var signal = await UuSignalClient.ConnectAsync(room, deadline.Token);
+            signal.Diagnostic += report;
             var info = await signal.GetRoomInfoAsync(deadline.Token);
             if (info.Packet?.Data?[0]?["you"]?["role"]?.GetValue<string>() != "publisher")
                 throw new InvalidOperationException("被控身份未获确认。");
+            await signal.RefreshReconnectKeyAsync(deadline.Token);
             var availability = await api.GetHostAvailabilityAsync(deadline.Token);
             restore = true;
             if (availability.Availability == "control_off")

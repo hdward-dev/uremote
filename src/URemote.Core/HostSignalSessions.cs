@@ -36,13 +36,24 @@ public sealed class HostSignalSessions
         if (name is not ("be-controlled" or "soac" or "released")) return new(HostSignalAction.Ignored);
         lock (gate)
         {
+            if (name == "released")
+            {
+                // Official released carries user_device_id + ice_id, whereas left carries client_id.
+                // Match exactly one existing ICE session; stale or conflicting notifications do nothing.
+                var releasedIce = RequiredString(payload, "ice_id");
+                var releasedClient = payload["client_id"] is null ? null : RequiredString(payload, "client_id");
+                var matches = peers.Values.Where(p => p.Id.IceId == releasedIce
+                    && (releasedClient is null || p.Id.ClientId == releasedClient)).Take(2).ToArray();
+                if (matches.Length != 1) return new(HostSignalAction.Ignored);
+                var released = matches[0];
+                peers.Remove((released.Id.ClientId, released.Id.IceId));
+                return new(HostSignalAction.Released, released);
+            }
             var clientId = RequiredString(payload, "client_id");
             var data = name == "soac" ? payload["data"] as JsonObject
                 ?? throw new FormatException("Missing soac payload.") : payload;
             var iceId = RequiredString(data, "ice_id");
             var key = (clientId, iceId);
-            if (name == "released")
-                return peers.Remove(key, out var released) ? new(HostSignalAction.Released, released) : new(HostSignalAction.Ignored);
             if (name == "be-controlled")
             {
                 var id = new HostPeerId(clientId, iceId, RequiredString(payload, "app_control_id"));

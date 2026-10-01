@@ -33,6 +33,18 @@ static class HostSessionTests
         check(sessions.Accept(request).Action == HostSignalAction.Ignored && sessions.Peers[0].Phase == HostPeerPhase.OfferReceived, "duplicate control notification cannot reset peer state");
         var staleRelease = Frame("released", new JsonObject { ["client_id"] = "fixture-client", ["ice_id"] = "old-ice" });
         check(sessions.Accept(staleRelease).Action == HostSignalAction.Ignored && sessions.Peers.Count == 1, "stale release cannot remove new ICE session");
+        var staleOfficialRelease = Frame("released", new JsonObject { ["user_device_id"] = "fixture-device", ["ice_id"] = "stale-ice" });
+        check(sessions.Accept(staleOfficialRelease).Action == HostSignalAction.Ignored && sessions.Peers.Count == 1,
+            "official stale release without client_id cannot remove active peer");
+        var wrongClientRelease = Frame("released", new JsonObject { ["client_id"] = "another-client", ["ice_id"] = "fixture-ice" });
+        check(sessions.Accept(wrongClientRelease).Action == HostSignalAction.Ignored && sessions.Peers.Count == 1,
+            "conflicting client identity cannot release current peer");
+        try { sessions.Accept(Frame("released", new JsonObject())); check(false, "missing release identity rejected"); }
+        catch (FormatException) { check(sessions.Peers.Count == 1, "invalid release leaves peer state intact"); }
+        var officialRelease = Frame("released", new JsonObject { ["user_device_id"] = "fixture-device", ["ice_id"] = "fixture-ice" });
+        check(sessions.Accept(officialRelease).Action == HostSignalAction.Released && sessions.Peers.Count == 0,
+            "official release uses ice_id without requiring client_id");
+        sessions.Accept(request);
         var release = Frame("released", new JsonObject { ["client_id"] = "fixture-client", ["ice_id"] = "fixture-ice" });
         check(sessions.Accept(release).Action == HostSignalAction.Released && sessions.Peers.Count == 0, "release removes matching session");
         check(sessions.Accept(offer).Action == HostSignalAction.Ignored, "late offer cannot resurrect released session");
