@@ -41,7 +41,8 @@ jobs:
           U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
           星栈下载：https://github.com/hdward-dev/asterdock/releases
 
-          本次更新包含默认 Windows 设备身份、画质与帧率设置修正、KDE Portal 支持、账号界面改进及已验证环境说明。
+          本次更新修复手机输入法提交中文、英文和表情时无法输入的问题，补全信令定期续期，并支持通过 uinput 发送桌面组合键。
+          本机 Niri Unicode 输入实测通过；KDE/GNOME Portal 文字输入尚待实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES
           gh release create "v$PLUGIN_VERSION" artifacts/release/AsterDock-App-u-remote.appbundle artifacts/release/SHA256SUMS.txt \
