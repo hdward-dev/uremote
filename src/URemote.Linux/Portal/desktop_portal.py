@@ -198,6 +198,19 @@ def command(data):
         code, down = data['code'], data['down']
         notify('NotifyKeyboardKeycode', 'iu', code, int(down))
         (held_keys.add if down else held_keys.discard)(code)
+    elif op == 'text':
+        text = data['text']
+        if not isinstance(text, str) or len(text.encode('utf-8')) > 4096:
+            raise RuntimeError('无效的输入文字。')
+        for char in text.replace('\r\n', '\n'):
+            value = ord(char)
+            if (value < 32 or 127 <= value < 160) and char not in '\r\n\t':
+                raise RuntimeError('不支持的控制字符。')
+            symbol = 0xff0d if char in '\r\n' else 0xff09 if char == '\t' else value if value <= 255 else 0x01000000 | value
+            try:
+                notify('NotifyKeyboardKeysym', 'iu', symbol, 1)
+            finally:
+                notify('NotifyKeyboardKeysym', 'iu', symbol, 0)
     elif op == 'button':
         code, down = data['code'], data['down']
         notify('NotifyPointerButton', 'iu', code, int(down))

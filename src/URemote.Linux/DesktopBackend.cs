@@ -67,6 +67,11 @@ public static class DesktopBackend
         }
         return await WaylandVirtualKeyboard.CreateAsync(ct);
     }
+    public static Task TypeTextAsync(string text, CancellationToken ct)
+    {
+        HostControlInput.ValidateText(text);
+        return portal is { } active ? active.TypeTextAsync(text, ct) : WaylandVirtualKeyboard.TypeTextAsync(text, ct);
+    }
     public static Task<IReadOnlyDictionary<uint, int>> ReadRefreshRatesAsync(CancellationToken ct)
         => portal is not null ? Task.FromResult<IReadOnlyDictionary<uint, int>>(new Dictionary<uint, int>()) : WaylandOutputRefresh.ReadAsync(ct);
 

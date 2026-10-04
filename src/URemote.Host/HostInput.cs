@@ -103,6 +103,11 @@ internal static class HostInput
                     }
                     await pointer.ApplyAsync(mouse, PointerCoordinates.MacNormalized, screen.Width, screen.Height, ct);
                 }
+                else if (input?.Text is { } committed)
+                {
+                    await DesktopBackend.TypeTextAsync(committed, ct);
+                    if (observed.Add("committed-text")) report("committed-text-applied");
+                }
                 else if (input?.Key is { } key) await keyboard!.ApplyAsync(key, ct);
                 else { if (observed.Add("ignored")) report("input-envelope-ignored"); continue; }
                 if (++count == 1) inputApplied?.Invoke();

@@ -8,7 +8,7 @@ public sealed record HostKeyMessage(KeyAction Action, int MacKey)
 {
     public override string ToString() => "HostKeyMessage(input redacted)";
 }
-public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMessage? Key = null, int DisplayId = 0)
+public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMessage? Key = null, int DisplayId = 0, string? Text = null)
 {
     public override string ToString() => "HostControlInput(contents redacted)";
     // Mouse coordinates remain normalized for both desktop platforms. Key codes differ.
@@ -50,9 +50,17 @@ public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMes
         var action = actionField.GetString();
         if (action?.StartsWith("mouse_", StringComparison.Ordinal) == true)
             return new(Mouse: HostMouseMessage.Parse(text, PointerCoordinates.MacNormalized) with { ScreenId = null }, DisplayId: displayId);
+        if (action == "text_input")
+        {
+            if (!root.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.String)
+                throw new FormatException("Missing committed text.");
+            var committed = content.GetString()!;
+            ValidateText(committed);
+            return committed.Length == 0 ? null : new(DisplayId: displayId, Text: committed);
+        }
         var keyAction = action switch { "kbd_press" => KeyAction.Press, "kbd_release" => KeyAction.Release,
             "kbd_click" => KeyAction.Click, _ => (KeyAction?)null };
-        if (keyAction is null) return null; // IME/text/clipboard are deliberately separate protocols.
+        if (keyAction is null) return null; // Unknown actions cannot become keyboard input.
         if (!root.TryGetProperty("key", out var key) || !key.TryGetInt32(out var code) || code < 0 || code > (windowsKeys ? 255 : 127))
             throw new FormatException("Invalid virtual key code.");
         if (windowsKeys)
@@ -62,4 +70,14 @@ public sealed record HostControlInput(HostMouseMessage? Mouse = null, HostKeyMes
         }
         return new(Key: new(keyAction.Value, code), DisplayId: displayId);
     }
+    public static void ValidateText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length > 4096) throw new FormatException("Committed text exceeds limit.");
+        try { if (new UTF8Encoding(false, true).GetByteCount(text) > 4096) throw new FormatException("Committed text exceeds limit."); }
+        catch (EncoderFallbackException) { throw new FormatException("Invalid Unicode text."); }
+        if (text.Any(c => char.IsControl(c) && c is not ('\n' or '\r' or '\t')))
+            throw new FormatException("Unsupported text control character.");
+    }
+
 }

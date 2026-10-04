@@ -128,6 +128,11 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         if (!Outputs.Any(o => o.Name == output)) throw new ArgumentException("所选显示器不可用。");
         return new Pointer(this, output);
     }
+    public async Task TypeTextAsync(string text, CancellationToken ct)
+    {
+        HostControlInput.ValidateText(text);
+        await ExchangeAsync(new { op = "text", text }, ct);
+    }
     public IDesktopKeyboard CreateKeyboard() => new Keyboard(this);
 
     public async Task CheckAliveAsync(CancellationToken ct)

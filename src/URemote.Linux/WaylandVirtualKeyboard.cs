@@ -57,6 +57,9 @@ public sealed class WaylandVirtualKeyboard : IDesktopKeyboard
         return b.ToString();
     }
     public static async Task<WaylandVirtualKeyboard> CreateAsync(CancellationToken ct = default)
+        => await CreateAsync(Keymap(), ct);
+
+    private static async Task<WaylandVirtualKeyboard> CreateAsync(string keymap, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(3));
@@ -70,7 +73,7 @@ public sealed class WaylandVirtualKeyboard : IDesktopKeyboard
             var seatObject = await c.BindAsync(seat, 1, timeout.Token);
             var keyboard = c.AllocateId();
             await c.SendAsync(manager, 0, WaylandConnection.Words(seatObject, keyboard), timeout.Token);
-            var bytes = Encoding.UTF8.GetBytes(Keymap() + "\0");
+            var bytes = Encoding.UTF8.GetBytes(keymap + "\0");
             using var file = UnixFileDescriptor.CreateMemoryFile();
             RandomAccess.SetLength(file, bytes.Length);
             await RandomAccess.WriteAsync(file, bytes, 0, timeout.Token);
@@ -80,6 +83,41 @@ public sealed class WaylandVirtualKeyboard : IDesktopKeyboard
         }
         catch { c.Dispose(); throw; }
     }
+    // Dedicated one-level Unicode keymap: no physical US-key translation or clipboard mutation.
+    // Each chunk owns its virtual keyboard, so regular shortcut keys retain their normal backend/map.
+    public static string TextKeymap(IReadOnlyList<Rune> runes)
+    {
+        if (runes.Count is < 1 or > 240) throw new ArgumentOutOfRangeException(nameof(runes));
+        var b = new StringBuilder("xkb_keymap { xkb_keycodes \"text\" { minimum=8; maximum=255;");
+        for (var i = 0; i < runes.Count; i++) b.Append($"<T{i:D3}>={i + 8};");
+        b.Append("}; xkb_types \"text\" { type \"ONE_LEVEL\" { modifiers=None; map[None]=Level1; }; }; xkb_compatibility \"text\" {}; xkb_symbols \"text\" {");
+        for (var i = 0; i < runes.Count; i++)
+        {
+            var symbol = runes[i].Value switch { 10 or 13 => "Return", 9 => "Tab", _ => "U" + runes[i].Value.ToString("X4") };
+            b.Append($"key <T{i:D3}> {{ type=\"ONE_LEVEL\", symbols[Group1]=[{symbol}] }};");
+        }
+        return b.Append("}; };").ToString();
+    }
+
+    public static async Task TypeTextAsync(string text, CancellationToken ct = default)
+    {
+        HostControlInput.ValidateText(text);
+        foreach (var chunk in text.Replace("\r\n", "\n").EnumerateRunes().Chunk(240))
+        {
+            await using var input = await CreateAsync(TextKeymap(chunk), ct);
+            await input.connection.SendAsync(input.keyboard, 2, WaylandConnection.Words(0, 0, 0, 0), ct);
+            for (uint i = 0; i < chunk.Length; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                input.held.Add(i);
+                await input.connection.SendAsync(input.keyboard, 1, WaylandConnection.Words(unchecked((uint)Environment.TickCount64), i, 1), ct);
+                await input.connection.SendAsync(input.keyboard, 1, WaylandConnection.Words(unchecked((uint)Environment.TickCount64), i, 0), ct);
+                input.held.Remove(i);
+            }
+            await input.connection.RoundtripAsync(ct);
+        }
+    }
+
     public async Task ApplyAsync(HostKeyMessage message, CancellationToken ct = default)
     {
         if (LinuxKey(message.MacKey) is not { } code) return;

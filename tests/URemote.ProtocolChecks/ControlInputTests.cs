@@ -61,6 +61,28 @@ static class ControlInputTests
         check(WaylandVirtualKeyboard.LinuxKey(0) == 30 && WaylandVirtualKeyboard.LinuxKey(56) == 42
             && WaylandVirtualKeyboard.LinuxKey(123) == 105 && WaylandVirtualKeyboard.LinuxKey(127) is null,
             "Mac letter, modifier and arrow map to evdev; unknown keys ignored");
+        var committedJson = "{\"action\":\"text_input\",\"content\":\"中文ABC🙂\"}";
+        var committed = HostControlInput.Decode("CONTROL_DATA_CHANNEL", true, Encoding.UTF8.GetBytes(committedJson), windowsKeys: true, displayCount: 1);
+        check(committed?.Text == "中文ABC🙂" && committed.Key is null, "mobile committed Unicode bypasses physical key translation");
+        check(HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, Fixture(committedJson))?.Text == committed?.Text,
+            "committed text supports binary VINPUT envelope");
+        check(!committed!.ToString().Contains("中文") && !ControlPacketShape.Describe(true, Encoding.UTF8.GetBytes(committedJson)).Contains("中文"),
+            "committed text stays out of model and structural diagnostics");
+        check(HostControlInput.Decode("TEXT_DATA_CHANNEL", true, Encoding.UTF8.GetBytes(committedJson)) is null,
+            "text input respects control channel routing");
+        foreach (var invalid in new[] { "{\"action\":\"text_input\"}", "{\"action\":\"text_input\",\"content\":3}",
+            "{\"action\":\"text_input\",\"content\":\"a\",\"content\":\"b\"}", "{\"action\":\"text_input\",\"content\":\"\\u0000\"}" })
+        {
+            try { HostControlInput.Decode("CONTROL_DATA_CHANNEL", true, Encoding.UTF8.GetBytes(invalid)); check(false, "invalid committed text rejected"); }
+            catch (FormatException) { check(true, "invalid committed text rejected"); }
+        }
+        try { HostControlInput.ValidateText(new string('中', 2000)); check(false, "Unicode text byte limit enforced"); }
+        catch (FormatException) { check(true, "Unicode text byte limit enforced"); }
+        try { HostControlInput.ValidateText("\ud800"); check(false, "unpaired surrogate rejected"); }
+        catch (FormatException) { check(true, "unpaired surrogate rejected"); }
+        var unicodeMap = WaylandVirtualKeyboard.TextKeymap("中A🙂".EnumerateRunes().ToArray());
+        check(unicodeMap.Contains("U4E2D") && unicodeMap.Contains("U0041") && unicodeMap.Contains("U1F642")
+            && !unicodeMap.Contains("Shift"), "Unicode keymap preserves non-BMP text without keyboard layout modifiers");
         var axis = WaylandVirtualPointer.AxisPayload(1, 0, 2);
         check(BinaryPrimitives.ReadInt32LittleEndian(axis.AsSpan(8)) == -512, "scroll uses signed Wayland fixed-point axis units");
     }
