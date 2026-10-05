@@ -162,33 +162,36 @@ public sealed partial class URemoteView
         hostBadge.Margin = new Thickness(8, 0, 0, 0);
         hostBadge.TextTrimming = TextTrimming.CharacterEllipsis;
         Grid.SetColumn(hostBadge, 1); hostHeading.Children.Add(hostBadge);
-        var right = new StackPanel { Spacing = 18, Children = { hostHeading, hostActions,
+        var hostPanel = new StackPanel { Spacing = 18, Margin = new Thickness(20), Children = { hostHeading, hostActions,
             localScreens, detail, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard(), BuildConnectionCard() } };
         status.FontSize = 14; detail.FontSize = 12;
-        var body = new Grid { ColumnDefinitions = new("190,*,300"), RowDefinitions = new("*,Auto") };
-        var leftBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) };
-        ApplyTheme(leftBorder, Border.BorderBrushProperty, "AppBorderBrush");
-        var scroll = new ScrollViewer { Margin = new Thickness(24), HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = page };
-        var rightBorder = new Border { Padding = new Thickness(20), BorderThickness = new Thickness(1, 0, 0, 0), Child = new ScrollViewer { Content = right, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
-        ApplyTheme(rightBorder, Border.BorderBrushProperty, "AppBorderBrush"); ApplyTheme(rightBorder, Border.BackgroundProperty, "AppSurfaceBrush");
-        body.Children.Add(leftBorder); Grid.SetColumn(scroll, 1); body.Children.Add(scroll); Grid.SetColumn(rightBorder, 2); body.Children.Add(rightBorder);
+        var body = new Grid { ColumnDefinitions = new("300,*,190"), RowDefinitions = new("*,Auto") };
+        var navigationBorder = new Border { Child = sidebar, BorderThickness = new Thickness(1, 0, 0, 0) };
+        ApplyTheme(navigationBorder, Border.BorderBrushProperty, "AppBorderBrush");
+        page.Margin = new Thickness(24);
+        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = page };
+        var hostBorder = new Border { BorderThickness = new Thickness(0, 0, 1, 0), Child = new ScrollViewer { Content = hostPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
+        ApplyTheme(hostBorder, Border.BorderBrushProperty, "AppBorderBrush"); ApplyTheme(hostBorder, Border.BackgroundProperty, "AppSurfaceBrush");
+        body.Children.Add(hostBorder); Grid.SetColumn(scroll, 1); body.Children.Add(scroll); Grid.SetColumn(navigationBorder, 2); body.Children.Add(navigationBorder);
         var footer = new Border { Padding = new Thickness(18, 8), BorderThickness = new Thickness(0, 1, 0, 0), Child = Text($"U远程 · 星栈远程控制插件  |  桌面环境：{DesktopEnvironmentInfo.Current.DisplayName}", 11, true) };
         ApplyTheme(footer, Border.BorderBrushProperty, "AppBorderBrush"); Grid.SetRow(footer, 1); Grid.SetColumnSpan(footer, 3); body.Children.Add(footer);
         Content = body;
         SizeChanged += (_, e) =>
         {
             var wide = e.NewSize.Width >= 1150;
-            body.ColumnDefinitions = new(wide ? "190,*,300" : "150,*,270");
-            scroll.Margin = new Thickness(wide ? 24 : 14);
+            body.ColumnDefinitions = new(wide ? "300,*,190" : "270,*,150");
+            page.Margin = new Thickness(wide ? 24 : 14);
             if (e.NewSize.Width < 850)
             {
-                body.ColumnDefinitions = new("130,*,0"); rightBorder.IsVisible = false;
-                if (!hostPage.Children.Contains(right)) { if (rightBorder.Child is ScrollViewer rs) rs.Content = null; rightBorder.Child = null; hostPage.Children.Insert(2, right); }
+                body.ColumnDefinitions = new("0,*,130"); hostBorder.IsVisible = false;
+                hostPanel.Margin = new Thickness(0);
+                if (!hostPage.Children.Contains(hostPanel)) { if (hostBorder.Child is ScrollViewer rs) rs.Content = null; hostBorder.Child = null; hostPage.Children.Insert(2, hostPanel); }
             }
             else
             {
-                if (hostPage.Children.Contains(right)) { hostPage.Children.Remove(right); rightBorder.Child = new ScrollViewer { Content = right, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; }
-                rightBorder.IsVisible = true;
+                if (hostPage.Children.Contains(hostPanel)) { hostPage.Children.Remove(hostPanel); hostBorder.Child = new ScrollViewer { Content = hostPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; }
+                hostPanel.Margin = new Thickness(20);
+                hostBorder.IsVisible = true;
             }
             var columns = e.NewSize.Width >= 1150 ? 2 : 1;
             if (columns != deviceColumns) { deviceColumns = columns; RenderDevices(); }
