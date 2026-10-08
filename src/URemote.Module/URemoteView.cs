@@ -104,7 +104,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception e) { if (!disposed) { hostBadge.Text = "○  被控不可用"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "桌面共享不可用";
-            detail.Text = e is NotSupportedException or InvalidOperationException ? e.Message : "请检查 Wayland 会话、桌面 Portal 服务及 Python / GStreamer 依赖。"; } }
+            detail.Text = e is NotSupportedException or InvalidOperationException ? e.Message : "请检查 Wayland 会话、桌面 Portal 服务及 GLib / GStreamer 原生库。"; } }
     }
     private async void Start()
     {

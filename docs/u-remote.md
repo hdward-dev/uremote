@@ -61,7 +61,7 @@ CPU 来自 /proc/cpuinfo，内存从 MemTotal 转为纯数字 MB（UU 界面自�
 ## 本机依赖与配置
 
 .NET 10、Wayland 桌面、带 libx264 的 FFmpeg；niri 原生后端需要 screencopy/虚拟键鼠协议。
-KDE / Portal 后端额外需要 `xdg-desktop-portal`、对应桌面实现（KDE 为 `xdg-desktop-portal-kde`，GNOME 为 `xdg-desktop-portal-gnome`）、Python 3 / PyGObject、GStreamer 的 PipeWire、videoconvert、appsink 插件和 GI 类型库。桥接脚本内嵌于程序集，屏幕像素仅通过私有进程管道传递，不写入磁盘。静止画面复用最近一帧，避免等待画面变化时阻塞键鼠指令；关闭会话清空缓存。媒体管线重启或单个控制端断开时，已经发送的桥接请求会完整读取响应，避免取消读取导致共享会话被误销毁。
+KDE / GNOME 的 Portal 后端由 C# 直接通过稳定 C ABI 调用 GLib/GIO（D-Bus）和 GStreamer（PipeWire 视频流），不再启动 Python 子进程，也不需要 Python、PyGObject 或 GI 类型库。仍需 `xdg-desktop-portal`、对应桌面实现（KDE 为 `xdg-desktop-portal-kde`，GNOME 为 `xdg-desktop-portal-gnome`）、GLib/GIO、GStreamer core / gst-app / gst-video，以及 PipeWire、videoconvert、appsink 插件。系统共享授权不被绕过；每个显示器有独立的原生采集管线，静止画面复用最近一帧，取消单次采集不会关闭整个会话。Unix 文件描述符、GVariant、视频样本、按住的键和会话在退出或撤销授权时释放；像素与输入正文不写磁盘和日志。
 音频需要 PipeWire 和 `pw-cat`；剪贴板沿用 `wl-clipboard`，其支持取决于桌面的 data-control 协议，GNOME 的剪贴板兼容尚未适配。
 默认身份位于模块数据目录 `identity.json`，编码器从 PATH 查找；高级设置可修改。
 开发时可使用 `UREMOTE_IDENTITY`、`UREMOTE_FFMPEG`。`UREMOTE_NO_AUTO_START=1` 仅用于不联网的界面检查。
@@ -151,3 +151,17 @@ services.udev.extraRules = ''
 Niri/原生 Wayland 使用独立的单层 Unicode 虚拟键盘映射，每 240 个 Unicode 标量分段，支持中文和非 BMP 表情；普通按键和快捷键仍沿用原来的 uinput 后端。Portal 后端使用 `NotifyKeyboardKeysym`，尚待 KDE/GNOME 实机验证。拒绝超限、非法 Unicode 和除换行/制表外的控制字符。
 
 2026-10-04 验证：Release 构建通过，188 项协议检查通过。在本机 Niri 的独立 Konsole 接收窗口中，通过生产解析及输入实现注入中文、英文、表情和跨分段长文本，收到的 798 字节与测试文本完全一致。手机端真实会话仍需复测。
+
+
+### 原生 Portal 验证（2026-10-08）
+
+`tests/URemote.PortalChecks` 使用隔离 D-Bus 服务和 GStreamer 合成视频测试授权响应竞态、拒绝与取消、Unix FD 列表索引、关闭通知、像素格式、跨度边界、缓存隔离及取消后继续采集。测试不请求真实屏幕授权：
+
+```sh
+dotnet build tests/URemote.PortalChecks -c Release
+UREMOTE_ISOLATED_TEST_BUS=1 dbus-run-session -- dotnet tests/URemote.PortalChecks/bin/Release/net10.0/URemote.PortalChecks.dll
+```
+
+运行环境需要上述原生库以及 `videotestsrc`；无需 Python。`--live-probe` 仅探测当前桌面接口，不打开共享窗口。本机 KDE Wayland 已完成系统授权，读取到双屏；用户已通过远端客户端确认画面和输入正常。GNOME 仍待实机验证。NixOS 需在应用启动环境中提供匹配进程架构的原生库搜索路径和 `GST_PLUGIN_SYSTEM_PATH_1_0`，不能混用 32 位插件；路径应来自系统包配置，不硬编码到插件程序集。
+
+验证结果：Release 全量构建零警告、零错误；188 项协议检查及 32 项原生 Portal 检查通过。本机 KDE 实际会话日志显示原生输入事件已应用，视频发送约 60 FPS；用户确认画面和输入正常。

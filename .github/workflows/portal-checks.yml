@@ -1,0 +1,18 @@
+name: Native Portal checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  native-portal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.400'
+      - name: Install native runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y dbus-daemon gstreamer1.0-plugins-base gstreamer1.0-pipewire libgstreamer-plugins-base1.0-0
+      - run: dotnet build tests/URemote.PortalChecks -c Release
+      - name: Test synthetic video and isolated Portal protocol
+        run: UREMOTE_ISOLATED_TEST_BUS=1 dbus-run-session -- dotnet tests/URemote.PortalChecks/bin/Release/net10.0/URemote.PortalChecks.dll
