@@ -14,6 +14,7 @@ internal sealed class MockPortal : IAsyncDisposable
     private static readonly string Xml = """
     <node>
       <interface name="org.freedesktop.portal.RemoteDesktop">
+        <method name="ConnectToEIS"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="h" direction="out"/></method>
         <method name="CreateSession"><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <method name="SelectDevices"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <method name="Start"><arg type="o" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
@@ -55,7 +56,7 @@ internal sealed class MockPortal : IAsyncDisposable
             var method=Marshal.PtrToStringUTF8(methodPtr)!;
             using var args=new PortalValue(NativeGlib.g_variant_ref(parameters));
             if(method=="Close") { Interlocked.Increment(ref RequestClosed);using var empty=PortalValue.Tuple();g_dbus_method_invocation_return_value(invocation,empty.Handle);return; }
-            if(method=="OpenPipeWireRemote")
+            if(method is "OpenPipeWireRemote" or "ConnectToEIS")
             {
                 args.Require("(oa{sv})");
                 using var file=File.OpenHandle("/tmp/uremote-native-fd-fixture",FileMode.Create,FileAccess.ReadWrite,FileShare.ReadWrite);

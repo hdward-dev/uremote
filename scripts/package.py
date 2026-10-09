@@ -22,7 +22,7 @@ with zipfile.ZipFile(bundle, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as arch
         if not path.is_file():
             continue
         rel = path.relative_to(source)
-        if len(rel.parts) > 1 and rel.parts[0] not in ('licenses', 'runtimes'):
+        if len(rel.parts) > 1 and rel.parts[0] not in ('licenses', 'runtimes', 'native'):
             continue
         if path.suffix == '.pdb' or path.name in ('URemote.Host', 'URemote.Host.exe'):
             continue

@@ -7,7 +7,26 @@ concurrency:
   group: plugin-release
   cancel-in-progress: false
 jobs:
+  native-rdp:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake pkg-config freerdp3-dev libwinpr3-dev
+      - run: bash scripts/build-uremote-rdp.sh
+      - uses: actions/upload-artifact@v6
+        with:
+          name: uremote-rdp-${{ matrix.rid }}
+          path: src/URemote.Module/Native/bin/${{ matrix.rid }}/*
+          if-no-files-found: error
   release:
+    needs: native-rdp
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -26,6 +45,16 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write(f'PLUGIN_VERSION={version}\n')
           PYCODE
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: uremote-rdp-*
+          path: artifacts/uremote-native
+      - name: Stage native RDP components
+        run: |
+          for rid in linux-x64 linux-arm64; do
+            mkdir -p "src/URemote.Module/Native/bin/$rid"
+            cp "artifacts/uremote-native/uremote-rdp-$rid/"* "src/URemote.Module/Native/bin/$rid/"
+          done
       - run: dotnet restore URemote.slnx
       - run: dotnet build URemote.slnx -c Release --no-restore -m:1
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build

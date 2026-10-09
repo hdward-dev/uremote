@@ -150,7 +150,9 @@ public static class HostPreview
                         report("session-type-value=" + update.Peer.Options.TypeValue);
                         var platform = request["controller_platform"]?.ToJsonString();
                         report("controller-platform=" + (int.TryParse(platform, out var platformCode) ? platformCode : -1));
-                        var mobileSingleStream = !terminal && (update.Peer.Options.ClientType == 1 || platformCode == 3);
+                        // Android tablets can use a desktop-like ClientType but still render only
+                        // the primary video track, just like iOS. Route screen selection onto it.
+                        var mobileSingleStream = !dataOnly && (update.Peer.Options.ClientType == 1 || platformCode is 2 or 3);
                         frameRateLimits = await ReadFrameRateLimitsAsync(outputs, report, token);
                         profiles = new HostVideoSettings(dimensions.ToArray(), mobileSingleStream, frameRateLimits);
                         report("video-routing=" + (mobileSingleStream ? "selected-screen-on-primary-track" : "independent-screen-tracks"));

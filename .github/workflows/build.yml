@@ -15,3 +15,18 @@ jobs:
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check
+
+  local-desktop:
+    name: Check embedded RDP and VNC
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.400
+      - name: Install FreeRDP development libraries
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config freerdp3-dev libwinpr3-dev
+      - name: Build native RDP bridge
+        run: bash scripts/build-uremote-rdp.sh
+      - name: Check VNC protocol and RDP native lifecycle
+        run: dotnet run --project tests/URemote.LocalChecks --configuration Release -- --require-rdp

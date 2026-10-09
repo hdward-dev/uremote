@@ -14,6 +14,13 @@ public interface IDesktopKeyboard : IAsyncDisposable
     Task ApplyAsync(HostKeyMessage message, CancellationToken ct = default);
 }
 
+public interface IDesktopTouch : IAsyncDisposable
+{
+    bool Available { get; }
+    bool Apply(uint output, HostTouchEvent input);
+    void Reset();
+}
+
 // Select by compositor capabilities rather than an allowlist of desktop names.
 public static class DesktopBackend
 {
@@ -67,6 +74,8 @@ public static class DesktopBackend
         }
         return await WaylandVirtualKeyboard.CreateAsync(ct);
     }
+    public static Task<IDesktopTouch?> CreateTouchAsync(CancellationToken ct)
+        => portal is { } active ? active.CreateTouchAsync(ct) : Task.FromResult<IDesktopTouch?>(null);
     public static Task TypeTextAsync(string text, CancellationToken ct)
     {
         HostControlInput.ValidateText(text);

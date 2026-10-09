@@ -98,13 +98,13 @@ public sealed partial class URemoteView
         status.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) UpdateHostBadge(); };
         var brand = new StackPanel { Spacing = 5, Margin = new Thickness(14, 12, 0, 30), Children = { Text("U远程", 25), Text("远程工作空间", 12, true) } };
         var tabs = new StackPanel { Spacing = 8 };
-        foreach (var item in new[] { ("我的设备", "▤", 0), ("本机被控", "▣", 1), ("账号与设置", "⚙", 2), ("远程协助", "♧", 3), ("文件传输", "⇄", 4) })
+        foreach (var item in new[] { ("我的设备", "▤", 0), ("本机被控", "▣", 1), ("账号与设置", "⚙", 2), ("远程协助", "♧", 3), ("文件传输", "⇄", 4), ("本地连接", "▱", 5) })
         {
             var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { Text(item.Item2, 18), Text(item.Item1, 14) } };
             var button = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 13), CornerRadius = new CornerRadius(9) };
             button.Click += (_, _) => ShowPage(item.Item3); navigation.Add(button);
         }
-        foreach (var i in new[] { 0, 1, 3, 4 }) tabs.Children.Add(navigation[i]);
+        foreach (var i in new[] { 0, 5, 1, 3, 4 }) tabs.Children.Add(navigation[i]);
         var sidebar = new DockPanel { Margin = new Thickness(12) };
         DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
         DockPanel.SetDock(navigation[2], Dock.Bottom); sidebar.Children.Add(navigation[2]); sidebar.Children.Add(tabs);
@@ -149,8 +149,8 @@ public sealed partial class URemoteView
         advancedSettings.Children.Add(Text("路径在下次启动被控时保存。正常使用无需修改。", 12, true));
         var accountPage = BuildAccountPage();
         var assistancePage = BuildConnectAssistancePage();
-        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }];
-        var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 8) };
+        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }, BuildLocalConnectionPage()];
+        var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 2) };
         hostActions.Children.Add(Text("允许本机被控", 14)); Grid.SetColumn(hostSwitch, 1); hostActions.Children.Add(hostSwitch);
         hostSwitch.MinWidth = 0;
         var screenLink = new Button { Content = "显示器与共享设置", HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -162,7 +162,7 @@ public sealed partial class URemoteView
         hostBadge.Margin = new Thickness(8, 0, 0, 0);
         hostBadge.TextTrimming = TextTrimming.CharacterEllipsis;
         Grid.SetColumn(hostBadge, 1); hostHeading.Children.Add(hostBadge);
-        var hostPanel = new StackPanel { Spacing = 18, Margin = new Thickness(20), Children = { hostHeading, hostActions,
+        var hostPanel = new StackPanel { Spacing = 8, Margin = new Thickness(14, 12), Children = { hostHeading, hostActions,
             localScreens, detail, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard(), BuildConnectionCard() } };
         status.FontSize = 14; detail.FontSize = 12;
         var body = new Grid { ColumnDefinitions = new("300,*,190"), RowDefinitions = new("*,Auto") };
@@ -190,7 +190,7 @@ public sealed partial class URemoteView
             else
             {
                 if (hostPage.Children.Contains(hostPanel)) { hostPage.Children.Remove(hostPanel); hostBorder.Child = new ScrollViewer { Content = hostPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; }
-                hostPanel.Margin = new Thickness(20);
+                hostPanel.Margin = new Thickness(14, 12);
                 hostBorder.IsVisible = true;
             }
             var columns = e.NewSize.Width >= 1150 ? 2 : 1;

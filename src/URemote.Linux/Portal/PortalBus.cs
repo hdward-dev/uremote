@@ -124,18 +124,22 @@ internal sealed class PortalBus : IAsyncDisposable
             if (!delivered && completion.Task.IsCompletedSuccessfully) completion.Task.Result.Dispose();
         }
     }
-    internal Task<SafeFileHandle> OpenPipeWireAsync(string session, CancellationToken ct) => Task.Run(() => WithCancellation(ct, cancel =>
+    internal Task<SafeFileHandle> OpenPipeWireAsync(string session, CancellationToken ct)
+        => OpenDescriptorAsync(ScreenCast, "OpenPipeWireRemote", session, ct);
+    internal Task<SafeFileHandle> OpenEisAsync(string session, CancellationToken ct)
+        => OpenDescriptorAsync(RemoteDesktop, "ConnectToEIS", session, ct);
+    private Task<SafeFileHandle> OpenDescriptorAsync(string iface, string method, string session, CancellationToken ct) => Task.Run(() => WithCancellation(ct, cancel =>
     {
         using var path = PortalValue.Path(session); using var options = PortalValue.Dict(); using var args = PortalValue.Tuple(path, options);
-        var result = NativeGlib.g_dbus_connection_call_with_unix_fd_list_sync(connection, Destination, Desktop, ScreenCast, "OpenPipeWireRemote", args.Handle, 0, 0, 10000, 0, out var fds, cancel, out var error);
+        var result = NativeGlib.g_dbus_connection_call_with_unix_fd_list_sync(connection, Destination, Desktop, iface, method, args.Handle, 0, 0, 10000, 0, out var fds, cancel, out var error);
         try
         {
-            NativeGlib.Check(error, "打开 PipeWire", ct);
+            NativeGlib.Check(error, method, ct);
             using var value = new PortalValue(result); using var index = value.Child(0);
-            if (fds == 0) throw new FormatException("Portal 未返回 PipeWire 文件描述符。");
+            if (fds == 0) throw new FormatException("Portal 未返回 Portal 文件描述符。");
             var fd = NativeGlib.g_unix_fd_list_get(fds, index.FdIndex(), out var fdError);
-            NativeGlib.Check(fdError, "读取 PipeWire 文件描述符", ct);
-            if (fd < 0) throw new IOException("无效的 PipeWire 文件描述符。");
+            NativeGlib.Check(fdError, "读取 Portal 文件描述符", ct);
+            if (fd < 0) throw new IOException("无效的 Portal 文件描述符。");
             return new SafeFileHandle(fd, ownsHandle: true);
         }
         finally { if (fds != 0) NativeGlib.g_object_unref(fds); }

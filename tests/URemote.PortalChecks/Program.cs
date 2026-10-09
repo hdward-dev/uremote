@@ -3,6 +3,16 @@ using URemote.Linux;
 
 var checks = 0;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); checks++; Console.WriteLine("PASS: " + name); }
+if (args.FirstOrDefault() == "--touch-probe")
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+    var mappings = args.Skip(1).Select((name,index)=>(name,index)).ToDictionary(p=>(uint)p.index,p=>p.name);
+    if (mappings.Count == 0) throw new ArgumentException("Provide display mapping IDs.");
+    await using var touch = await PortalTouchSession.OpenAsync(mappings, deadline.Token);
+    Check(touch.Available,"live touch-only Portal session maps all requested outputs; no input was sent");
+    return;
+}
+if (args.Contains("--touch-only")) { await EisTouchChecks.RunAsync(Check); Console.WriteLine($"{checks} isolated EIS checks passed."); return; }
 using (var text = PortalValue.String("fixture"))
 using (var number = PortalValue.UInt(3))
 using (var dict = PortalValue.Dict(("text", text), ("types", number)))
@@ -71,6 +81,11 @@ using (var fd = await bus.OpenPipeWireAsync(MockPortal.Session,CancellationToken
 {
     var marker = new byte[4]; var count = RandomAccess.Read(fd,marker,0);
     Check(count == 4 && marker.SequenceEqual(new byte[]{1,2,3,4}),"Unix FD list index resolves to owned descriptor surviving reply disposal");
+}
+using (var fd = await bus.OpenEisAsync(MockPortal.Session, CancellationToken.None))
+{
+    var marker = new byte[4];
+    Check(RandomAccess.Read(fd,marker,0) == 4 && marker[3] == 4, "ConnectToEIS resolves the returned FD list index");
 }
 var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var subscription = await bus.SubscribeAsync(PortalBus.InterfacePrefix+".Session","Closed",MockPortal.Session,_=>closed.TrySetResult());

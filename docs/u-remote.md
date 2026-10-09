@@ -17,7 +17,12 @@ U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动�
 
 ## 当前能力
 
-- 原生界面分为“我的设备”“本机被控”“账号与设置”，沿用 AsterDock 深浅主题；停止被控始终可见。
+- 右边栏新增“本地连接”：可切换 RDP / VNC，通过 IP 或主机名直接连接，无需 UU 登录。默认端口分别为 3389 / 5900，支持自定义端口、IPv6、RDP 用户名与域。密码不保存，连接后清空输入框。
+  画面在 U远程自己的 Avalonia 窗口中显示，支持等比缩放、全屏、键盘、鼠标、滚轮；Ctrl+Alt+Esc 释放键鼠，关闭窗口断开连接。同一协议、地址、端口和账号重复连接会激活已有窗口。
+  VNC 支持 RFB 3.3 / 3.7 / 3.8、无认证及传统 VNC 密码认证、Raw / CopyRect / 桌面尺寸变化；暂不支持 VeNCrypt、Tight 认证、音频和剪贴板。传统 VNC 连接本身不加密，应在可信网络中使用。
+  RDP 使用 FreeRDP 3 / WinPR 3 动态库及本仓库的 ABI 桥接组件，支持 NLA / TLS、软件解码和键鼠输入。未受信任或变化的证书会在应用中提示，仅明确确认后本次信任，不自动忽略证书。当前发行流程附带 Linux x64 / arm64 桥接组件，仍需系统安装 FreeRDP 3 运行库；其他平台需自行构建对应桥接组件。暂不提供 RDP 音频、剪贴板、文件重定向或动态分辨率。
+
+- 原生界面包含“我的设备”“本地连接”“本机被控”“远程协助”“文件传输”“账号与设置”，沿用 AsterDock 深浅主题；停止被控始终可见。
 - 设备列表直接使用当前 UU 登录身份读取，支持名称/编号/平台搜索、在线/设备类型筛选、本机标记、本地收藏、详情及复制编号。
   设备页每 60 秒刷新，失败时保留上次结果；仅收藏编号存放于本机，不保存完整设备列表。在线且允许被控的其他电脑可点击“远程控制”，打开原生独立窗口；重复点击激活已有窗口。
 
@@ -43,6 +48,8 @@ U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动�
 
 ## 验证状态
 
+本地连接新增 121 项检查：VNC 三个协议版本及两种认证的 TCP 回环、分片读取、Raw / CopyRect / 尺寸变化、键鼠与滚轮、取消及越界拒绝；RDP 原生库初始化、实际服务端画面解码、证书回调、拒绝证书、取消与释放。界面另验证 RDP / VNC 切换、默认端口及表单保留。RDP 与 Windows NLA 服务端的实际互通、不同 VNC 服务端兼容性仍需目标机器验证。
+
 KDE Plasma / Wayland 本机后端检查：系统 Portal 授权后，跨越 10 秒连续采集 12 帧 1366×768 BGRA 画面、20 次重复取消采集仍保持共享、零滚动事件、Shift 按下/释放及关闭会话均通过；这不代表官方客户端端到端连接或多屏效果已实测。桌面环境识别覆盖 KDE、niri、GNOME、复合桌面名、未知桌面及 X11。
 
 已确认的此前实测：Windows/iOS 官方客户端连接，Windows 键鼠控制及双屏对应正确。
@@ -59,6 +66,8 @@ CPU 来自 /proc/cpuinfo，内存从 MemTotal 转为纯数字 MB（UU 界面自�
 主控端退出仅结束当前媒体会话，本机继续等待连接；信令断开会退避重建房间。仅本机停止或退出宿主（或显式定时到期）停止被控。
 
 ## 本机依赖与配置
+
+本地 RDP 连接需要 FreeRDP 3 / WinPR 3 运行库（Ubuntu 24.04 可安装 `libfreerdp3-3 libwinpr3-3`）。开发构建先安装 CMake、pkg-config 和 FreeRDP 3 开发包，再运行 `bash scripts/build-uremote-rdp.sh`，然后构建 URemote.Module；桥接组件会自动复制到模块输出的 `native/<rid>` 中。macOS 可通过安装 FreeRDP 3 后使用同一脚本构建。VNC 不需要外部客户端或原生库。
 
 .NET 10、Wayland 桌面、带 libx264 的 FFmpeg；niri 原生后端需要 screencopy/虚拟键鼠协议。
 KDE / GNOME 的 Portal 后端由 C# 直接通过稳定 C ABI 调用 GLib/GIO（D-Bus）和 GStreamer（PipeWire 视频流），不再启动 Python 子进程，也不需要 Python、PyGObject 或 GI 类型库。仍需 `xdg-desktop-portal`、对应桌面实现（KDE 为 `xdg-desktop-portal-kde`，GNOME 为 `xdg-desktop-portal-gnome`）、GLib/GIO、GStreamer core / gst-app / gst-video，以及 PipeWire、videoconvert、appsink 插件。系统共享授权不被绕过；每个显示器有独立的原生采集管线，静止画面复用最近一帧，取消单次采集不会关闭整个会话。Unix 文件描述符、GVariant、视频样本、按住的键和会话在退出或撤销授权时释放；像素与输入正文不写磁盘和日志。

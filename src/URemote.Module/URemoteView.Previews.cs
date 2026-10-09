@@ -113,8 +113,8 @@ public sealed partial class URemoteView
                 var screenIndex = outputs.FindIndex(x => x.Id == id) + 1;
                 var label = Text($"显示屏 {screenIndex}" + (localScreenFps.TryGetValue(screenIndex, out var fps) ? $" · FPS {fps}" : ""), 11, true);
                 localScreenLabels[screenIndex] = label;
-                var tile = new Button { Content = new StackPanel { Spacing = 5, Children = { image, label } },
-                    Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 6) };
+                var tile = new Button { Content = new StackPanel { Spacing = 3, Children = { image, label } },
+                    Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 2) };
                 tile.Click += (_, _) => ShowPage(1); ToolTip.SetTip(tile, "本机屏幕快照 · 点击修改共享设置"); localScreens.Children.Add(tile);
                 if (!hostEnabled || Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") == "1") continue;
                 CapturedScreen? frame = null;

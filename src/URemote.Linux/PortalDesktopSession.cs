@@ -11,6 +11,7 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     private readonly CancellationTokenSource closed = new();
     private readonly Dictionary<uint, (PortalVideoStream Video, int Width, int Height)> streams = [];
     private readonly HashSet<(string Method, int Code)> held = [];
+    private readonly Dictionary<uint, string> touchMappings = [];
     private SafeFileHandle? remote;
     private string? session;
     private bool enableInput, disposed;
@@ -94,6 +95,8 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
                 if (width <= 0 || height <= 0) throw new FormatException("无效的桌面逻辑尺寸。");
             }
             if (input && (width == 0 || height == 0)) throw new NotSupportedException("桌面未提供指针定位所需的逻辑尺寸。");
+            using var mapping = properties.Get("mapping_id");
+            if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.Text())) touchMappings.Add(node, mapping.Text());
             streams.Add(node, (new PortalVideoStream(node, checked((int)remote.DangerousGetHandle())), width, height));
         }
         CheckAlive();
@@ -154,6 +157,13 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     {
         if (!streams.ContainsKey(output)) throw new ArgumentException("所选显示器不可用。");
         return new Pointer(this, output);
+    }
+    public async Task<IDesktopTouch?> CreateTouchAsync(CancellationToken ct)
+    {
+        CheckAlive();
+        if (!enableInput || touchMappings.Count != streams.Count || touchMappings.Values.Distinct().Count() != streams.Count) return null;
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, closed.Token);
+        return await PortalTouchSession.OpenAsync(touchMappings, lifetime.Token);
     }
     public IDesktopKeyboard CreateKeyboard() => new Keyboard(this);
     private sealed class Pointer(PortalDesktopSession owner, uint output) : IDesktopPointer

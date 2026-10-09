@@ -13,6 +13,7 @@ internal static class HostInput
         await using var fileTransfer = enableFiles ? new HostFileTransfer(media.SendData, report, ct) : null;
         await using var keyboard = enableInput ? await DesktopBackend.CreateKeyboardAsync(ct) : null;
         report("keyboard-backend=" + (keyboard is UInputKeyboard ? "uinput" : keyboard is WaylandVirtualKeyboard ? "wayland" : keyboard is null ? "disabled" : "portal"));
+        await using var touch = await HostTouchInput.OpenAsync(enableInput, report, ct);
         await using var clipboard = enableClipboard ? new HostClipboard(media, report) : null;
         using var clipboardStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var watch = clipboard?.WatchAsync(clipboardStop.Token) ?? Task.CompletedTask;
@@ -57,6 +58,8 @@ internal static class HostInput
                     continue;
                 }
                 if (fileTransfer is not null && await fileTransfer.HandleAsync(message)) continue;
+                if (category == "control" && !message.IsText && HostTouchProtocol.ReplyMetrics(message.Bytes, ++sequence, touch?.Available == true) is { } metricsReply)
+                { media.SendControl(metricsReply); continue; }
                 if (category == "control" && !message.IsText && HostControlEcho.Reply(message.Bytes, ++sequence,
                     (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), enableInput, enableClipboard, enableFiles) is { } reply)
                 {
@@ -69,7 +72,9 @@ internal static class HostInput
                 }
                 if (category is "text" or "control" && profiles is not null && HostCaptureProtocol.Decode(message.Bytes) is { } update)
                 {
+                    var previousScreen = profiles.SelectedScreen;
                     var accepted = profiles.Apply(update);
+                    if (accepted && previousScreen != profiles.SelectedScreen) touch?.Reset();
                     report("capture-values=" + HostCaptureProtocol.DescribeSettings(message.Bytes));
                     report($"capture-request;screen={update.Screen};width={update.Width};height={update.Height};fps={update.Fps};quality={update.Quality};accepted={accepted}");
                     if (accepted)
@@ -82,6 +87,27 @@ internal static class HostInput
                 }
                 if (clipboard is not null && await clipboard.HandleAsync(message, ct)) continue;
                 if (!enableInput) continue;
+                if (category == "control" && !message.IsText && HostTouchProtocol.Decode(message.Bytes) is { } touchEvent)
+                {
+                    if (touch?.Available == true)
+                    {
+                        var displayId = profiles?.SelectedScreen ?? 0;
+                        var screen = displays[displayId];
+                        var profile = profiles?.Get(displayId);
+                        var mapped = HostTouchInput.Map(touchEvent, screen.Width, screen.Height, profile?.Width ?? 1280, profile?.Height ?? 720);
+                        try
+                        {
+                            if (mapped is null) touch.Reset();
+                            else if (touch.Apply(outputs[displayId], mapped))
+                            {
+                                if (++count == 1) inputApplied?.Invoke();
+                                if (observed.Add("touch-applied")) report("touch-frame-applied");
+                            }
+                        }
+                        catch (IOException) { touch.Reset(); if (observed.Add("touch-failed")) report("touch-frame-rejected"); }
+                    }
+                    continue;
+                }
                 var input = HostControlInput.Decode(message.ChannelLabel, message.IsText, message.Bytes, outputs.Count, HostWirePlatform.Windows);
                 if (input?.Mouse is { } mouse)
                 {

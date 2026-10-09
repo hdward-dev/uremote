@@ -287,7 +287,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
             case "terminal-opened": status.Text = "远程终端已连接"; detail.Text = "以当前用户运行；停止被控会关闭终端会话。"; break;
             case "terminal-detached": metrics.Text = "终端会话已保留，可重新连接"; break;
             case "terminal-closed": metrics.Text = "终端会话已结束"; break;
-            case "ready": hostBadge.Text = "●  被控已开启"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush"); status.Text = "等待连接"; detail.Text = "已上线，可通过 UU 官方客户端连接。"; break;
+            case "ready": hostBadge.Text = "●  被控已开启"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush"); status.Text = "等待连接"; detail.Text = ""; break;
             case "viewer-released": status.Text = "等待连接"; detail.Text = ""; break;
             case "stopping": status.Text = "正在停止"; break;
             case "stopped": hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); if (!restoreFailed) { status.Text = "被控已关闭"; detail.Text = "远程连接已断开，键鼠与终端会话已释放。"; } break;
@@ -318,6 +318,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     public void Dispose()
     {
         if (disposed) return;
+        foreach (var window in localWindows.Values.ToArray()) window.Close();
         foreach (var window in remoteWindows.Values.ToArray()) window.Close();
         foreach (var window in toolWindows.Values.ToArray()) window.Close();
         disposed = true; termination?.Dispose(); lifetime.Cancel(); sessionStop?.Cancel();

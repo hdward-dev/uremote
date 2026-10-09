@@ -19,6 +19,7 @@ void Reject(Action action, string label)
     { Check(true, label); return; }
     throw new Exception("FAIL: " + label);
 }
+TouchTests.Run(Check);
 Check(HostWirePlatform.Windows && HostWirePlatform.ResolveWindows("") && HostWirePlatform.ResolveWindows("windows"), "release defaults to Windows without launcher environment overrides");
 Check(!HostWirePlatform.ResolveWindows("mac"), "explicit Mac diagnostic override remains available");
 var bundle = new BundledIceCandidates("v=0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:1\r\n");

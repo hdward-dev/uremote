@@ -8,12 +8,11 @@ namespace URemote.Module;
 
 public sealed partial class URemoteView
 {
-    private readonly StackPanel controlConnectionPanel = new() { Spacing = 12, IsVisible = false };
+    private readonly StackPanel controlConnectionPanel = new() { Spacing = 8, IsVisible = false };
     private readonly TextBlock connectionDevice = new() { FontSize = 16, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock connectionDetails = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock connectionLocation = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock connectionIdentity = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock connectionDuration = new() { FontSize = 28, FontWeight = FontWeight.SemiBold };
+    private readonly TextBlock connectionDuration = new() { FontSize = 20, FontWeight = FontWeight.SemiBold };
     private readonly TextBlock connectionStarted = new() { FontSize = 12 };
     private readonly DispatcherTimer connectionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Button disconnectControl = new() { Content = "断开控制", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
@@ -23,14 +22,20 @@ public sealed partial class URemoteView
     {
         var heading = Text("●  当前控制连接", 16);
         ApplyTheme(heading, TextBlock.ForegroundProperty, "AppPositiveBrush");
-        foreach (var item in new[] { connectionDetails, connectionLocation, connectionIdentity, connectionStarted })
+        foreach (var item in new[] { connectionDetails, connectionLocation, connectionStarted })
             ApplyTheme(item, TextBlock.ForegroundProperty, "AppMutedBrush");
         controlConnectionPanel.Children.Add(new Separator());
         controlConnectionPanel.Children.Add(heading);
-        controlConnectionPanel.Children.Add(Card(new StackPanel { Spacing = 8, Children = {
-            connectionDevice, connectionDetails, connectionIdentity, connectionLocation,
-            new Border { Height = 4 }, Text("已连接时长", 12, true), connectionDuration, connectionStarted, disconnectControl
-        } }));
+        var durationRow = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 8 };
+        var durationLabel = Text("已连接时长", 12, true);
+        durationLabel.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        connectionDuration.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right;
+        durationRow.Children.Add(durationLabel);
+        Grid.SetColumn(connectionDuration, 1); durationRow.Children.Add(connectionDuration);
+        controlConnectionPanel.Children.Add(Card(new StackPanel { Spacing = 6, Children = {
+            connectionDevice, connectionDetails, connectionLocation,
+            durationRow, connectionStarted, disconnectControl
+        } }, 10));
         disconnectControl.Click += (_, _) =>
         {
             if (!disconnectControl.IsEnabled || currentControlConnection?.RequestDisconnect is not { } disconnect) return;
@@ -71,13 +76,11 @@ public sealed partial class URemoteView
         if (connection is null)
         {
             ClearScreenFps();
-            connectionDevice.Text = connectionDetails.Text = connectionIdentity.Text = connectionLocation.Text = connectionStarted.Text = connectionDuration.Text = "";
+            connectionDevice.Text = connectionDetails.Text = connectionLocation.Text = connectionStarted.Text = connectionDuration.Text = "";
             return;
         }
         connectionDevice.Text = devices.FirstOrDefault(x => x.Id == connection.DeviceId)?.Name ?? connection.PlatformName + " 控制端";
         connectionDetails.Text = connection.PlatformName + " · " + (connection.Assistance ? "协助码连接" : "账号连接") + " · " + connection.SessionName;
-        connectionIdentity.Text = "设备 ID：" + connection.DeviceId;
-        connectionIdentity.IsVisible = connection.DeviceId.Length > 0;
         connectionLocation.Text = "来源：" + connection.Location;
         connectionLocation.IsVisible = connection.Location.Length > 0;
         connectionDuration.Text = connection.ElapsedText;

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.18)
+project(uremote_rdp C)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FREERDP REQUIRED IMPORTED_TARGET freerdp3 winpr3)
+add_library(uremote-rdp SHARED rdp_bridge.c)
+target_link_libraries(uremote-rdp PRIVATE PkgConfig::FREERDP)
+set_target_properties(uremote-rdp PROPERTIES C_STANDARD 11 C_VISIBILITY_PRESET hidden INSTALL_RPATH_USE_LINK_PATH TRUE)
+install(TARGETS uremote-rdp LIBRARY DESTINATION . RUNTIME DESTINATION .)
