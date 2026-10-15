@@ -5,8 +5,6 @@ using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 using URemote.Media;
 
-if(args.Contains("--decoder-pipe-check")) { await DecoderPipeChecks.RunAsync(); return; }
-
 if(args.Contains("--candidate-signaling-check")) { await CandidateSignalingChecks.RunAsync(); return; }
 if(args.Contains("--clipboard-check")) { await ClipboardChecks.RunAsync(); return; }
 

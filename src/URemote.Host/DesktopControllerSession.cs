@@ -73,7 +73,7 @@ public sealed class DesktopControllerSession
                 {
                     if (!decoders.TryGetValue(index, out var decoder))
                     {
-                        try { decoder = new ControllerVideoDecoder(ffmpeg, message => Status?.Invoke(message)); }
+                        try { decoder = new ControllerVideoDecoder(ffmpeg); }
                         catch { done.TrySetException(new IOException("Could not start video decoder.")); return; }
                         decoders[index] = decoder; Status?.Invoke("video-stream-received");
                         decoder.Failed += () => done.TrySetException(new IOException("Video decoder stopped."));
