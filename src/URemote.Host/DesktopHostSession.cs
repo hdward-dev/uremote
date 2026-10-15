@@ -22,7 +22,7 @@ public static class DesktopHostSession
     }
 
     public static async Task RunAsync(string identityPath, string ffmpeg, IReadOnlyList<uint> outputs,
-        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null, HostAdmission? admission = null)
+        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null, HostAdmission? admission = null, Func<string>? encoderPath = null)
     {
         if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         if (outputs.Count > 5 || outputs.Distinct().Count() != outputs.Count || (duration != Timeout.InfiniteTimeSpan && (duration <= TimeSpan.Zero
@@ -83,6 +83,7 @@ public static class DesktopHostSession
                         continue;
                     }
                     if (duration != Timeout.InfiniteTimeSpan) controlStop.CancelAfter(duration);
+                    ffmpeg = encoderPath?.Invoke() ?? ffmpeg;
                     if (!Path.IsPathFullyQualified(ffmpeg) || !File.Exists(ffmpeg))
                         throw new NotSupportedException("请检查编码器路径。");
                     report("desktop-authorizing");
@@ -108,7 +109,7 @@ public static class DesktopHostSession
                     report("ready");
                     using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(controlStop.Token);
                     var watch = WatchDisplaysAsync(available, previewStop, report);
-                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync); }
+                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath); }
                     catch (OperationCanceledException) when (previewStop.IsCancellationRequested) { }
                     finally { previewStop.Cancel(); await watch; }
                     if (signal.Events.Completion.IsCompleted) { await signal.Events.Completion; throw new IOException("Publisher signal closed."); }

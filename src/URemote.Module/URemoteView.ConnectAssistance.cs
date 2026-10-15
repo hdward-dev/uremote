@@ -23,12 +23,12 @@ public sealed partial class URemoteView
                 request = new AssistanceRequest(id, partnerCode.Text ?? "");
                 var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
                 if (!state.IsAuthenticated) { hint.Text = "请先在账号与设置中登录。"; return; }
-                if (!System.IO.File.Exists(encoder.Text)) { hint.Text = "请先在高级设置中配置视频解码器路径。"; return; }
+                if (!System.IO.File.Exists(appliedEncoder)) { hint.Text = "请先在高级设置中配置视频解码器路径。"; return; }
                 if (id == assistanceId.Text) { hint.Text = "这是本机的协助码，请输入对方的协助码。"; return; }
                 var key = "assistance:" + id;
                 if (remoteWindows.TryGetValue(key, out var existing)) { existing.Activate(); hint.Text = "已打开该协助窗口。"; return; }
                 var device = new UuDevice(id, "远程协助", "desktop", 0, "ONLINE", true, true, "", false);
-                var window = new RemoteDesktopWindow(device, state, encoder.Text!, request);
+                var window = new RemoteDesktopWindow(device, state, appliedEncoder, request);
                 remoteWindows.Add(key, window);
                 window.Closed += async (_, _) => { try { await window.Completion; } finally { remoteWindows.Remove(key); } };
                 try { window.Show(); } catch { remoteWindows.Remove(key); throw; }

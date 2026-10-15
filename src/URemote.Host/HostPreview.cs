@@ -8,7 +8,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null)
     {
         report ??= Console.WriteLine;
         if (OperatingSystem.IsMacOS() && enableAudio) { enableAudio = false; report("audio-unavailable"); }
@@ -217,7 +217,7 @@ public static class HostPreview
                                 try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
                         };
                         var peerToken = peerStop.Token;
-                        video = StreamAsync(media, ffmpeg, dataOnly ? Array.Empty<uint>() : outputs, peerToken, enableInput, async () =>
+                        video = StreamAsync(media, encoderPath?.Invoke() ?? ffmpeg, dataOnly ? Array.Empty<uint>() : outputs, peerToken, enableInput, async () =>
                         {
                             await signal.SendEventAsync("ice_finished_log", new JsonObject
                             { ["app_control_id"] = id.AppControlId, ["ice_id"] = id.IceId }, ct: peerToken);

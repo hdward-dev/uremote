@@ -58,7 +58,7 @@ public sealed partial class URemoteView
             localWallpaperChecked = DateTimeOffset.UtcNow;
             try
             {
-                var png = await LinuxWallpaper.RenderAsync(encoder.Text ?? "", lifetime.Token);
+                var png = await LinuxWallpaper.RenderAsync(appliedEncoder, lifetime.Token);
                 if (png is not null && !disposed && !loggingOut && generation == accountGeneration)
                 {
                     using var stream = new MemoryStream(png);

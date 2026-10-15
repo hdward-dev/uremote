@@ -66,7 +66,8 @@ public sealed partial class URemoteView : UserControl, IDisposable
         identity.Text = Environment.GetEnvironmentVariable("UREMOTE_IDENTITY") ?? Path.Combine(dataDirectory, "identity.json");
         encoder.Text = Environment.GetEnvironmentVariable("UREMOTE_FFMPEG") ?? FindExecutable("ffmpeg");
         try { if (File.Exists(settingsFile) && JsonSerializer.Deserialize<Settings>(File.ReadAllText(settingsFile)) is { } saved)
-            { identity.Text = saved.Identity; encoder.Text = saved.Encoder; allowAssistance = saved.AllowAssistance; hostEnabled = saved.HostEnabled; } } catch (IOException) { } catch (JsonException) { }
+            { identity.Text = saved.Identity; if (Path.IsPathFullyQualified(saved.Encoder) && File.Exists(saved.Encoder)) encoder.Text = saved.Encoder; allowAssistance = saved.AllowAssistance; hostEnabled = saved.HostEnabled; } } catch (IOException) { } catch (JsonException) { }
+        appliedEncoder = encoder.Text ?? "";
         try { URemote.Core.HostAssistance.SetEnabled(DesktopHostSession.ReadIdentity(identity.Text!).State.DeviceId, allowAssistance); } catch { }
         LoadAssistanceSettings();
         if (OperatingSystem.IsMacOS()) { audio.IsChecked = false; audio.IsEnabled = false; audio.Content = "macOS 系统声音尚未支持"; input.Content = "允许键鼠控制"; }
@@ -92,7 +93,9 @@ public sealed partial class URemoteView : UserControl, IDisposable
             directories.Insert(0, Path.Combine(Path.GetDirectoryName(typeof(URemoteView).Assembly.Location)!, "ffmpeg", rid));
             directories.AddRange(["/opt/homebrew/bin", "/usr/local/bin"]);
         }
-        return directories.Select(p => Path.Combine(p, name)).FirstOrDefault(File.Exists) ?? "";
+        return directories.Where(Path.IsPathFullyQualified)
+            .Select(p => Path.Combine(p, OperatingSystem.IsWindows() ? name + ".exe" : name))
+            .FirstOrDefault(File.Exists) ?? "";
     }
     private async Task InitializeAsync()
     {
@@ -124,7 +127,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         if (session is { IsCompleted: false })
         {
             hostEnabled = true;
-            try { File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", encoder.Text ?? "", allowAssistance, true))); }
+            try { File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", appliedEncoder, allowAssistance, true))); }
             catch (IOException) { detail.Text = "设置未能保存。"; }
             admission.SetEnabled(true);
             SetHostSwitch(true);
@@ -168,7 +171,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     {
         if (disposed || session is { IsCompleted: false }) return;
         var selected = outputs.Where(x => x.Check.IsChecked == true).Select(x => x.Id).ToArray();
-        var path = identity.Text ?? ""; var ffmpeg = encoder.Text ?? "";
+        var path = identity.Text ?? ""; var ffmpeg = appliedEncoder;
         try
         {
             if (!DesktopHostSession.ReadIdentity(path).State.IsAuthenticated) throw new InvalidOperationException();
@@ -193,13 +196,13 @@ public sealed partial class URemoteView : UserControl, IDisposable
         sessionStop?.Dispose(); sessionStop = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var token = sessionStop.Token; restoreFailed = false;
         admission.SetEnabled(hostEnabled);
-        SetHostSwitch(hostEnabled); hostSwitch.IsEnabled = true; settings.IsEnabled = false; advancedSettings.IsEnabled = false;
+        SetHostSwitch(hostEnabled); hostSwitch.IsEnabled = true; settings.IsEnabled = false; identity.IsEnabled = false;
         hostBadge.Text = "●  正在上线"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppWarningBrush");
         status.Text = "正在上线"; detail.Text = "正在连接 UU 服务…";
         session = Task.Run(async () =>
         {
             try { await DesktopHostSession.RunAsync(path, ffmpeg, selected, enabled, limit, Report, token, sound, sync, indices,
-                connection => Post(() => UpdateControlConnection(connection)), admission); }
+                connection => Post(() => UpdateControlConnection(connection)), admission, () => Volatile.Read(ref appliedEncoder)); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception e)
             {
@@ -208,7 +211,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 Post(() => { if (!restoreFailed) { status.Text = displayChanged ? "显示器已变化" : "连接已停止";
                     detail.Text = displayChanged ? "请重新开启被控，将自动读取当前显示器。" : e is NotSupportedException or InvalidOperationException or DesktopSessionClosedException ? e.Message : "请检查网络、登录状态或是否已有另一被控实例运行。"; } });
             }
-            finally { Post(() => { session = null; SetHostSwitch(false); hostSwitch.IsEnabled = true; hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); settings.IsEnabled = true; advancedSettings.IsEnabled = true; }); }
+            finally { Post(() => { session = null; SetHostSwitch(false); hostSwitch.IsEnabled = true; hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); settings.IsEnabled = true; identity.IsEnabled = true; }); }
         });
     }
     private async Task LoginAsync(bool complete)
@@ -342,7 +345,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         hostEnabled = false;
         try
         {
-            File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", encoder.Text ?? "", allowAssistance, false)));
+            File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", appliedEncoder, allowAssistance, false)));
             hostEnabled = false;
         }
         catch { detail.Text = "停止设置未能保存，应用重启后可能再次开启被控。"; }

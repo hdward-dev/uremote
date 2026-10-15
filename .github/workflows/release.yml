@@ -76,7 +76,7 @@ jobs:
           U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
           星栈下载：https://github.com/hdward-dev/asterdock/releases
 
-          本次更新加入 macOS 被控、原生屏幕采集与键鼠、壁纸预览及桌面快捷操作，并修复 macOS 刷新率单位。KDE 桌面快捷操作已实机验证；GNOME 显示桌面沿用已有系统快捷键，不修改系统设置。
+          本次更新允许在线编辑 FFmpeg 路径，加入自动检测与验证并应用；新路径用于后续连接，保持当前连接不受影响。启动时自动忽略失效的旧路径，并修复 macOS 原生库打包路径。
           macOS 系统音频、触控和被控终端尚未支持；GNOME 桌面快捷操作仍需实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES

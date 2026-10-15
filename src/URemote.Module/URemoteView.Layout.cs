@@ -146,7 +146,7 @@ public sealed partial class URemoteView
         loginPanel.Children.Add(Text("验证码仅用于本次登录。点击“发送验证码”后才会发送短信。", 12, true));
         advancedSettings.Children.Add(Text("本机登录文件", 13, true)); advancedSettings.Children.Add(identity);
         advancedSettings.Children.Add(Text("视频编码器", 13, true)); advancedSettings.Children.Add(encoder);
-        advancedSettings.Children.Add(Text("路径在下次启动被控时保存。正常使用无需修改。", 12, true));
+        BuildEncoderSettings();
         var accountPage = BuildAccountPage();
         var assistancePage = BuildConnectAssistancePage();
         pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }, BuildLocalConnectionPage(dataDirectory)];
@@ -313,8 +313,8 @@ public sealed partial class URemoteView
         try
         {
             var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
-            if (!state.IsAuthenticated || !File.Exists(encoder.Text)) throw new InvalidOperationException();
-            var window = new RemoteDesktopWindow(device, state, encoder.Text!);
+            if (!state.IsAuthenticated || !File.Exists(appliedEncoder)) throw new InvalidOperationException();
+            var window = new RemoteDesktopWindow(device, state, appliedEncoder);
             remoteWindows.Add(device.Id, window);
             window.Closed += async (_, _) => { try { await window.Completion; } finally { remoteWindows.Remove(device.Id); } };
             window.Show();
