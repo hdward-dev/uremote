@@ -34,10 +34,13 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 - 设备壁纸预览、网格／列表切换、搜索与收藏；点击预览在独立视窗打开远程桌面。
 - 卡片底栏提供文件传输与终端入口。终端支持命令输入和 Ctrl+C，暂不支持全屏终端程序；文件窗口支持目录浏览、单文件上传下载、进度与取消。端口映射、远程开机尚未实现，入口置灰。
 - Linux / Wayland 本机被控，包含多屏、键鼠、远程终端及文件传入/取出。
+- macOS 本机被控，使用原生 ScreenCaptureKit 屏幕采集与键鼠输入，支持设备上线、壁纸预览和桌面快捷操作。
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
 - 显示器变化及部分网络、采集故障自动重试。
 
-本机被控需要已登录的 Linux Wayland 桌面及带 libx264 的 FFmpeg。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma 使用桌面 Portal / PipeWire，需要对应桌面的 Portal 实现、Python 3 / PyGObject 和 GStreamer 插件，详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。Windows/macOS 本机被控后端尚未实现。
+Linux 本机被控需要已登录的 Wayland 桌面及带 libx264 的 FFmpeg。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma / GNOME 使用原生桌面 Portal / PipeWire 对接，需要对应桌面的 Portal 实现及 GStreamer / PipeWire 原生库，不再依赖 Python 3 / PyGObject。详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。Linux 系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。
+
+macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“辅助功能”权限，并配置可用的 FFmpeg。macOS 系统声音、触控及被控远程终端尚未实现；Windows 本机被控后端尚未实现。
 
 声音、剪贴板、跨客户端兼容性及长期稳定性仍需验证。文件接收目录为 `~/Downloads/uurc`。不提供虚拟显示器，无登录桌面或系统休眠时不保证远控可用。
 
@@ -49,8 +52,9 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 | --- | --- | --- | --- |
 | NixOS 26.11（Zokor，x86_64；Linux 7.2.5） | niri 26.04 | Wayland | Windows / iOS 客户端连接本机、桌面传屏与键鼠控制、多屏画面及切屏、远程终端；本机主控通过外网连接 Windows，画面与键鼠正常 |
 | Ubuntu 26.04.1 LTS（Kubuntu 桌面） | KDE Plasma 6.6.6 | Wayland | 桌面环境识别、Portal 授权与连续画面采集、键鼠接口、取消采集后保持共享、关闭会话，以及主题默认壁纸预览 |
+| macOS 26.5（arm64） | macOS 桌面；Mac mini，Apple M4（Mac16,10） | 本机图形会话 | 账号登录与设备上线、原生屏幕采集与键鼠控制、刷新率读取、当前壁纸识别与预览上传；不含系统声音、触控及被控远程终端 |
 
-以上仅代表各行列出的实际验证范围，不代表所有客户端组合、声音、双向剪贴板及长期稳定性均已验证。NixOS / niri 一行汇总此前本机联调结果；当前环境信息核对于 2026-09-30，本次文档更新未重新执行完整功能回归。GNOME 尚待实测；后续环境验证通过后会补充到此表。
+以上仅代表各行列出的实际验证范围，不代表所有客户端组合、声音、双向剪贴板及长期稳定性均已验证。NixOS / niri 一行汇总此前本机联调结果；Linux 环境信息核对于 2026-09-30；Mac mini 一行依据 2026-10-15 的实机联调结果补充，本次文档更新未重新执行完整功能回归。GNOME 尚待实测；后续环境验证通过后会补充到此表。
 
 ## 插件开发
 
