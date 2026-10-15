@@ -11,11 +11,16 @@ internal sealed class MockPortal : IAsyncDisposable
     private readonly GetProperty getter;
     internal volatile bool Hold, Deny;
     internal int RequestClosed;
+    internal uint Version = 4;
+    internal string? NextRestoreToken, ReceivedRestoreToken;
+    internal uint? PersistMode;
+    internal string? PersistenceMethod;
     internal uint SelectedTypes, GrantedTypes = 3;
     internal readonly List<string> Calls = [];
     private static readonly string Xml = """
     <node>
       <interface name="org.freedesktop.portal.RemoteDesktop">
+        <property name="version" type="u" access="read"/>
         <property name="AvailableDeviceTypes" type="u" access="read"/>
         <method name="ConnectToEIS"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="h" direction="out"/></method>
         <method name="CreateSession"><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
@@ -23,6 +28,8 @@ internal sealed class MockPortal : IAsyncDisposable
         <method name="Start"><arg type="o" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
       </interface>
       <interface name="org.freedesktop.portal.ScreenCast">
+        <method name="Start"><arg type="o" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
+        <property name="version" type="u" access="read"/>
         <property name="AvailableCursorModes" type="u" access="read"/>
         <method name="SelectSources"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <property name="AvailableSourceTypes" type="u" access="read"/>
@@ -31,7 +38,7 @@ internal sealed class MockPortal : IAsyncDisposable
       <interface name="org.freedesktop.portal.Request"><method name="Close"/></interface>
     </node>
     """;
-    private MockPortal() { callback = OnMethod; getter = (_,_,_,_,property,_,_) => NativeGlib.g_variant_new_uint32(Marshal.PtrToStringUTF8(property) == "AvailableDeviceTypes" ? 7u : 1u); }
+    private MockPortal() { callback = OnMethod; getter = (_,_,_,_,property,_,_) => NativeGlib.g_variant_new_uint32(Marshal.PtrToStringUTF8(property) switch { "version" => Version, "AvailableDeviceTypes" => 7u, _ => 1u }); }
     internal static async Task<MockPortal> CreateAsync()
     {
         var server = new MockPortal();
@@ -81,13 +88,21 @@ internal sealed class MockPortal : IAsyncDisposable
             args.Require(method=="CreateSession"?"(a{sv})":method=="Start"?"(osa{sv})":"(oa{sv})");
             using var options=args.Child(args.Count-1);using var token=options.Get("handle_token")!;
             if (method == "SelectDevices") { using var selected=options.Get("types"); SelectedTypes=selected!.UInt(); }
+            if (method is "SelectDevices" or "SelectSources")
+            {
+                using var persist = options.Get("persist_mode"); using var restored = options.Get("restore_token");
+                if (persist is not null) { PersistMode = persist.UInt(); PersistenceMethod = method; }
+                if (restored is not null) ReceivedRestoreToken = restored.Text();
+            }
             var sender=Marshal.PtrToStringUTF8(senderPtr)!;
             var request=PortalBus.Desktop+"/request/"+sender.TrimStart(':').Replace('.','_')+"/"+token.Text();
             Register(request,PortalBus.InterfacePrefix+".Request");
             if(!Hold)
             {
                 using var code=PortalValue.UInt(Deny?1u:0u);using var session=PortalValue.Path(Session);using var types=PortalValue.UInt(GrantedTypes);
-                using var result=method=="CreateSession"?PortalValue.Dict(("session_handle",session)):PortalValue.Dict(("devices",types));
+                using var next = NextRestoreToken is null ? null : PortalValue.String(NextRestoreToken);
+                using var result=method=="CreateSession"?PortalValue.Dict(("session_handle",session)):
+                    method == "Start" && next is not null ? PortalValue.Dict(("devices",types),("restore_token",next)) : PortalValue.Dict(("devices",types));
                 using var response=PortalValue.Tuple(code,result);
                 if(g_dbus_connection_emit_signal(connection,sender,request,PortalBus.InterfacePrefix+".Request","Response",response.Handle,out var error)==0)NativeGlib.Check(error,"test response");
             }

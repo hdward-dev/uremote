@@ -63,7 +63,7 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         await bus.SubscribeAsync(PortalBus.InterfacePrefix + ".Session", "Closed", session, _ => { closed.Cancel(); touch?.Reset(); });
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, closed.Token);
         var token = lifetime.Token;
-        using var started = await PortalAuthorization.StartAsync(bus, session!, input, token);
+        using var started = await PortalAuthorization.StartAsync(bus, session!, input, token, new PortalRestoreStore(input));
         uint grantedTypes = 0;
         if (input)
         {

@@ -84,6 +84,7 @@ server.GrantedTypes = 3;
 using (var partial = await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, CancellationToken.None))
 using (var devices = partial.Get("devices"))
     Check(devices!.UInt() == 3, "declining touch does not force a second authorization");
+await PersistenceChecks.RunAsync(server, bus, Check);
 server.Deny = true;
 try { using var denied = await bus.RequestAsync(PortalBus.RemoteDesktop,"Start",MockPortal.Session,true,[],CancellationToken.None); Check(false,"denial"); }
 catch (InvalidOperationException) { Check(true,"authorization denial propagates"); }
