@@ -31,6 +31,8 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 
 ## 功能与运行条件
 
+**必须安装 FFmpeg 9.0.0 或更高版本，并确保包含 libx264 编码器。主控与被控端均需满足此要求。** 可运行 `ffmpeg -version` 查看版本；在 U远程“账号与设置 → 高级设置”中可填写 FFmpeg 可执行文件的完整路径，并点击“验证并应用”。
+
 - 设备壁纸预览、网格／列表切换、搜索与收藏；点击预览在独立视窗打开远程桌面。
 - 卡片底栏提供文件传输与终端入口。终端支持命令输入和 Ctrl+C，暂不支持全屏终端程序；文件窗口支持目录浏览、单文件上传下载、进度与取消。端口映射、远程开机尚未实现，入口置灰。
 - Linux / Wayland 本机被控，包含多屏、键鼠、远程终端及文件传入/取出。
@@ -38,9 +40,9 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
 - 显示器变化及部分网络、采集故障自动重试。
 
-Linux 本机被控需要已登录的 Wayland 桌面及带 libx264 的 FFmpeg。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma / GNOME 使用原生桌面 Portal / PipeWire 对接，需要对应桌面的 Portal 实现及 GStreamer / PipeWire 原生库，不再依赖 Python 3 / PyGObject。详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。Linux 系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。
+Linux 本机被控需要已登录的 Wayland 桌面及带 libx264 的 FFmpeg 9.0.0 或更高版本。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma / GNOME 使用原生桌面 Portal / PipeWire 对接，需要对应桌面的 Portal 实现及 GStreamer / PipeWire 原生库，不再依赖 Python 3 / PyGObject。详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。Linux 系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。
 
-macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“辅助功能”权限，并配置可用的 FFmpeg。macOS 系统声音、触控及被控远程终端尚未实现；Windows 本机被控后端尚未实现。
+macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“辅助功能”权限，并配置 FFmpeg 9.0.0 或更高版本（含 libx264）。macOS 系统声音、触控及被控远程终端尚未实现；Windows 本机被控后端尚未实现。
 
 声音、剪贴板、跨客户端兼容性及长期稳定性仍需验证。文件接收目录为 `~/Downloads/uurc`。不提供虚拟显示器，无登录桌面或系统休眠时不保证远控可用。
 
