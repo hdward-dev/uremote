@@ -12,6 +12,11 @@ jobs:
           dotnet-version: '10.0.400'
       - run: bash scripts/build-uremote-mac.sh arm64
       - run: bash scripts/build-uremote-mac.sh x86_64
+      - name: Build plugin and verify native output paths
+        run: |
+          dotnet build src/URemote.Module -c Release
+          test -f src/URemote.Module/bin/Release/net10.0/native/osx-arm64/liburemote-mac.dylib
+          test -f src/URemote.Module/bin/Release/net10.0/native/osx-x64/liburemote-mac.dylib
       - run: dotnet build tests/URemote.MacChecks -c Release
       - name: Load native ABI without requesting permissions
         run: |

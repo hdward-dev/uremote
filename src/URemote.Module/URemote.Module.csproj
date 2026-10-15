@@ -8,7 +8,8 @@
   <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../scripts/build-uremote-mac.sh&quot; &quot;$(RuntimeIdentifier)&quot;" />
   <ItemGroup>
     <Content Remove="Native/bin/osx-*/liburemote-mac.dylib" />
-    <Content Include="Native/bin/**/liburemote-mac.dylib" Link="native/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Native/bin/osx-arm64/liburemote-mac.dylib" Link="native/osx-arm64/liburemote-mac.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('Native/bin/osx-arm64/liburemote-mac.dylib')" />
+<Content Include="Native/bin/osx-x64/liburemote-mac.dylib" Link="native/osx-x64/liburemote-mac.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('Native/bin/osx-x64/liburemote-mac.dylib')" />
   </ItemGroup>
 </Target>
 </Project>
