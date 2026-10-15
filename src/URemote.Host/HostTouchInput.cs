@@ -7,9 +7,8 @@ internal static class HostTouchInput
 {
     internal static async Task<IDesktopTouch?> OpenAsync(bool enableInput, Action<string> report, CancellationToken ct)
     {
-        // Opt in while validating compositor compatibility. Never fall back to
-        // private KDE calls or advertise touch when authorization/setup failed.
-        if (!enableInput || Environment.GetEnvironmentVariable("UREMOTE_NATIVE_TOUCH") != "1") return null;
+        // Reuse host authorization; incoming peers must never trigger a chooser.
+        if (!enableInput) return null;
         try
         {
             var touch = await DesktopBackend.CreateTouchAsync(ct);

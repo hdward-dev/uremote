@@ -8,7 +8,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null)
     {
         report ??= Console.WriteLine;
         await using var ownedTerminals = terminalManager is null ? new HostTerminalManager() : null;
@@ -100,11 +100,21 @@ public static class HostPreview
                 var hasFrame = signal.Events.TryRead(out var frame);
                 signalReady = signal.Events.WaitToReadAsync(token).AsTask();
                 if (!hasFrame || frame is null) continue;
-                if (assistance is not null && frame.Packet?.Data is JsonArray push
-                    && push[0]?.GetValue<string>() == "push" && HostAssistance.Challenge(push) is { } challenge)
+                if (assistanceMode is not null && HostAssistance.ControlModeRequest(frame.Packet?.Data) is { } modeControl)
                 {
+                    try { await assistanceMode(modeControl, token); report("assistance-mode-answered;mode=by_password"); }
+                    catch (Exception e) when (e is HttpRequestException or InvalidDataException or TimeoutException)
+                    { report("assistance-mode-failed;type=" + e.GetType().Name); }
+                    continue;
+                }
+                if (assistance is not null && frame.Packet?.Data is JsonArray push
+                    && push.Count > 0 && push[0] is JsonValue pushName && pushName.TryGetValue<string>(out var pushEvent)
+                    && pushEvent is "push" or "bmsg_push" && HostAssistance.Challenge(push) is { } challenge)
+                {
+                    report("assistance-challenge-received;allowed=" + !(assistancePermission?.Invoke().IsCancellationRequested ?? false));
                     try { await assistance(challenge.ControlId, challenge.Salt, token); report("assistance-challenge-answered"); }
-                    catch (Exception e) when (e is HttpRequestException or InvalidDataException or TimeoutException) { report("assistance-challenge-failed"); }
+                    catch (Exception e) when (e is HttpRequestException or InvalidDataException or TimeoutException)
+                    { report("assistance-challenge-failed;type=" + e.GetType().Name); }
                     continue;
                 }
                 if (frame.Packet?.Data is JsonArray settingPacket && settingPacket.Count > 1 && settingPacket[1] is JsonObject settingObject)

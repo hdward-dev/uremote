@@ -11,22 +11,27 @@ internal sealed class MockPortal : IAsyncDisposable
     private readonly GetProperty getter;
     internal volatile bool Hold, Deny;
     internal int RequestClosed;
+    internal uint SelectedTypes, GrantedTypes = 3;
+    internal readonly List<string> Calls = [];
     private static readonly string Xml = """
     <node>
       <interface name="org.freedesktop.portal.RemoteDesktop">
+        <property name="AvailableDeviceTypes" type="u" access="read"/>
         <method name="ConnectToEIS"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="h" direction="out"/></method>
         <method name="CreateSession"><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <method name="SelectDevices"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <method name="Start"><arg type="o" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
       </interface>
       <interface name="org.freedesktop.portal.ScreenCast">
+        <property name="AvailableCursorModes" type="u" access="read"/>
+        <method name="SelectSources"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
         <property name="AvailableSourceTypes" type="u" access="read"/>
         <method name="OpenPipeWireRemote"><arg type="o" direction="in"/><arg type="a{sv}" direction="in"/><arg type="h" direction="out"/></method>
       </interface>
       <interface name="org.freedesktop.portal.Request"><method name="Close"/></interface>
     </node>
     """;
-    private MockPortal() { callback = OnMethod; getter = (_,_,_,_,_,_,_) => NativeGlib.g_variant_new_uint32(1); }
+    private MockPortal() { callback = OnMethod; getter = (_,_,_,_,property,_,_) => NativeGlib.g_variant_new_uint32(Marshal.PtrToStringUTF8(property) == "AvailableDeviceTypes" ? 7u : 1u); }
     internal static async Task<MockPortal> CreateAsync()
     {
         var server = new MockPortal();
@@ -54,6 +59,7 @@ internal sealed class MockPortal : IAsyncDisposable
         try
         {
             var method=Marshal.PtrToStringUTF8(methodPtr)!;
+            Calls.Add(method);
             using var args=new PortalValue(NativeGlib.g_variant_ref(parameters));
             if(method=="Close") { Interlocked.Increment(ref RequestClosed);using var empty=PortalValue.Tuple();g_dbus_method_invocation_return_value(invocation,empty.Handle);return; }
             if(method is "OpenPipeWireRemote" or "ConnectToEIS")
@@ -74,12 +80,13 @@ internal sealed class MockPortal : IAsyncDisposable
             }
             args.Require(method=="CreateSession"?"(a{sv})":method=="Start"?"(osa{sv})":"(oa{sv})");
             using var options=args.Child(args.Count-1);using var token=options.Get("handle_token")!;
+            if (method == "SelectDevices") { using var selected=options.Get("types"); SelectedTypes=selected!.UInt(); }
             var sender=Marshal.PtrToStringUTF8(senderPtr)!;
             var request=PortalBus.Desktop+"/request/"+sender.TrimStart(':').Replace('.','_')+"/"+token.Text();
             Register(request,PortalBus.InterfacePrefix+".Request");
             if(!Hold)
             {
-                using var code=PortalValue.UInt(Deny?1u:0u);using var session=PortalValue.Path(Session);using var types=PortalValue.UInt(3);
+                using var code=PortalValue.UInt(Deny?1u:0u);using var session=PortalValue.Path(Session);using var types=PortalValue.UInt(GrantedTypes);
                 using var result=method=="CreateSession"?PortalValue.Dict(("session_handle",session)):PortalValue.Dict(("devices",types));
                 using var response=PortalValue.Tuple(code,result);
                 if(g_dbus_connection_emit_signal(connection,sender,request,PortalBus.InterfacePrefix+".Request","Response",response.Handle,out var error)==0)NativeGlib.Check(error,"test response");

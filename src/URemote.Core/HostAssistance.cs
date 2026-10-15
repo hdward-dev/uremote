@@ -67,6 +67,20 @@ public static class HostAssistance
     public static string Rotate(string deviceId) => Codes[deviceId] = Generate();
     private static string Generate() => new(Enumerable.Range(0,8).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]).ToArray());
     public static string Sign(string salt, string code) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(salt + code)));
+    // Official Windows hosts answer this before the controller asks for a password.
+    // It is not a password challenge and must never grant passwordless access.
+    public static string? ControlModeRequest(JsonNode? node)
+    {
+        if (node is not JsonArray { Count: >= 2 } packet
+            || packet[0] is not JsonValue name || !name.TryGetValue<string>(out var eventName)
+            || eventName is not ("push" or "bmsg_push")
+            || packet[1] is not JsonObject envelope
+            || envelope["type"] is not JsonValue kind || !kind.TryGetValue<string>(out var type) || type != "get_control_mode"
+            || envelope["data"] is not JsonObject data
+            || data["control_id"] is not JsonValue id || !id.TryGetValue<string>(out var control)
+            || string.IsNullOrWhiteSpace(control) || control.Length > 256) return null;
+        return control;
+    }
     public static (string ControlId,string Salt)? Challenge(JsonNode? node, int depth = 0)
     {
         if(depth > 4 || node is null) return null;

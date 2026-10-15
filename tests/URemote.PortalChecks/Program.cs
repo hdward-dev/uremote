@@ -3,14 +3,22 @@ using URemote.Linux;
 
 var checks = 0;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); checks++; Console.WriteLine("PASS: " + name); }
-if (args.FirstOrDefault() == "--touch-probe")
+if (args.Contains("--touch-lifetime")) { await SharedTouchChecks.RunAsync(Check); return; }
+if (args.FirstOrDefault() == "--input-probe")
 {
-    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-    var mappings = args.Skip(1).Select((name,index)=>(name,index)).ToDictionary(p=>(uint)p.index,p=>p.name);
-    if (mappings.Count == 0) throw new ArgumentException("Provide display mapping IDs.");
-    await using var touch = await PortalTouchSession.OpenAsync(mappings, deadline.Token);
-    Check(touch.Available,"live touch-only Portal session maps all requested outputs; no input was sent");
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(130));
+    await using var desktop = await PortalDesktopSession.OpenAsync(true, deadline.Token);
+    await using var touch = await desktop.CreateTouchAsync(deadline.Token);
+    Check(desktop.Outputs.Count > 0, "single combined authorization provides screen and EIS input; no input sent");
+    Check(touch?.Available == true, "combined authorization provides mapped touch regions");
     return;
+}
+if (args.Contains("--input-only"))
+{
+    await EisTouchChecks.RunAsync(Check, fullInput:true, textCapability:true);
+    await EisTouchChecks.RunAsync(Check, fullInput:true, textCapability:false);
+    await SharedTouchChecks.RunAsync(Check);
+    Console.WriteLine($"{checks} isolated combined EIS input checks passed."); return;
 }
 if (args.Contains("--touch-only")) { await EisTouchChecks.RunAsync(Check); Console.WriteLine($"{checks} isolated EIS checks passed."); return; }
 using (var text = PortalValue.String("fixture"))
@@ -66,6 +74,16 @@ using (var result = await bus.RequestAsync(PortalBus.RemoteDesktop,"SelectDevice
 using (var result = await bus.RequestAsync(PortalBus.RemoteDesktop,"Start",MockPortal.Session,true,[],CancellationToken.None))
 using (var devices = result.Get("devices"))
     Check(devices!.UInt() == 3,"start uses parent-window string and receives granted input types");
+server.Calls.Clear(); server.GrantedTypes = 7;
+using (var combined = await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, CancellationToken.None))
+{
+    Check(server.SelectedTypes == 7, "single request selects keyboard, pointer and touchscreen together");
+    Check(server.Calls.SequenceEqual(new[] {"SelectDevices","SelectSources","Start"}), "screen and input share one Start consent request");
+}
+server.GrantedTypes = 3;
+using (var partial = await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, CancellationToken.None))
+using (var devices = partial.Get("devices"))
+    Check(devices!.UInt() == 3, "declining touch does not force a second authorization");
 server.Deny = true;
 try { using var denied = await bus.RequestAsync(PortalBus.RemoteDesktop,"Start",MockPortal.Session,true,[],CancellationToken.None); Check(false,"denial"); }
 catch (InvalidOperationException) { Check(true,"authorization denial propagates"); }

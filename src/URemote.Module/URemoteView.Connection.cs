@@ -61,7 +61,7 @@ public sealed partial class URemoteView
         }
         else if (text is "等待连接" or "远程控制已连接" or "正在共享屏幕" or "屏幕共享已连接" or "远程终端已连接" or "文件传输已连接")
         { text = "被控已开启"; brush = "AppPositiveBrush"; }
-        else if (text is "被控已关闭" or "连接已停止" or "尚未就绪") brush = "AppMutedBrush";
+        else if (text is "在线 · 不允许被控" or "被控已关闭" or "连接已停止" or "尚未就绪") brush = "AppMutedBrush";
         hostBadge.Text = "●  " + text;
         ApplyTheme(hostBadge, TextBlock.ForegroundProperty, brush);
     }

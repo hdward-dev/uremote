@@ -12,6 +12,8 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     private readonly Dictionary<uint, (PortalVideoStream Video, int Width, int Height)> streams = [];
     private readonly HashSet<(string Method, int Code)> held = [];
     private readonly Dictionary<uint, string> touchMappings = [];
+    private SharedDesktopTouch? touch;
+    private PortalTouchSession? inputSession;
     private SafeFileHandle? remote;
     private string? session;
     private bool enableInput, disposed;
@@ -58,24 +60,16 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
             session = path.Text();
             if (!session.StartsWith(PortalBus.Desktop + "/session/", StringComparison.Ordinal)) throw new FormatException("无效的桌面授权会话。");
         }
-        await bus.SubscribeAsync(PortalBus.InterfacePrefix + ".Session", "Closed", session, _ => closed.Cancel());
+        await bus.SubscribeAsync(PortalBus.InterfacePrefix + ".Session", "Closed", session, _ => { closed.Cancel(); touch?.Reset(); });
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, closed.Token);
         var token = lifetime.Token;
-        if (input)
-        {
-            using var types = PortalValue.UInt(3);
-            using var devices = await bus.RequestAsync(PortalBus.RemoteDesktop, "SelectDevices", session, false, [("types", types)], token);
-        }
-        using var monitor = PortalValue.UInt(1); using var multiple = PortalValue.Bool(true);
-        var modes = await bus.PropertyAsync(PortalBus.ScreenCast, "AvailableCursorModes", token);
-        using var cursor = PortalValue.UInt((modes & 2) != 0 ? 2u : 1u);
-        using (var sources = await bus.RequestAsync(PortalBus.ScreenCast, "SelectSources", session, false,
-            [("types", monitor), ("multiple", multiple), ("cursor_mode", cursor)], token)) { }
-        using var started = await bus.RequestAsync(iface, "Start", session, true, [], token);
+        using var started = await PortalAuthorization.StartAsync(bus, session!, input, token);
+        uint grantedTypes = 0;
         if (input)
         {
             using var devices = started.Get("devices");
             if (devices is null || (devices.UInt() & 3) != 3) throw new InvalidOperationException("请允许键盘和鼠标控制后重试。");
+            grantedTypes = devices.UInt();
         }
         enableInput = input;
         using var outputs = started.Get("streams") ?? throw new FormatException("未选择共享显示器。");
@@ -101,10 +95,19 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         }
         CheckAlive();
         Outputs = streams.Keys.Select(id => new WaylandGlobal(id, "wl_output", 1)).ToArray();
+        if (input)
+        {
+            if (touchMappings.Count != streams.Count || touchMappings.Values.Distinct().Count() != streams.Count)
+                throw new NotSupportedException("桌面未提供 EIS 输入定位所需的显示器映射。");
+            inputSession = await PortalTouchSession.ConnectAsync(bus, session!, touchMappings, (grantedTypes & 4) != 0, token);
+            touch = new SharedDesktopTouch(inputSession, () => !disposed && !closed.IsCancellationRequested && !bus.IsClosed);
+            Console.WriteLine("portal-input=eis;authorization=combined;text=" + inputSession.SupportsText);
+        }
+        CheckAlive();
     }
     private void CheckAlive()
     {
-        if (disposed || closed.IsCancellationRequested || bus.IsClosed)
+        if (disposed || closed.IsCancellationRequested || bus.IsClosed || inputSession is { Connected: false })
             throw new DesktopSessionClosedException("桌面共享授权已结束，请重新开启被控并授权。");
     }
     public Task CheckAliveAsync(CancellationToken ct) { ct.ThrowIfCancellationRequested(); CheckAlive(); return Task.CompletedTask; }
@@ -117,22 +120,15 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         catch (OperationCanceledException) when (closed.IsCancellationRequested && !ct.IsCancellationRequested)
         { throw new DesktopSessionClosedException("桌面共享授权已结束。"); }
     }
-    private async Task NotifyAsync(string method, PortalValue[] values, CancellationToken ct)
-    {
-        CheckAlive();
-        if (!enableInput) throw new InvalidOperationException("键鼠控制未授权。");
-        using var path = PortalValue.Path(session!); using var options = PortalValue.Dict();
-        using var args = PortalValue.Tuple([path, options, ..values]);
-        using var response = await bus.CallAsync(PortalBus.RemoteDesktop, method, args, ct);
-    }
     private async Task KeyAsync(string method, int code, bool down, CancellationToken ct)
     {
         await inputGate.WaitAsync(ct);
         try
         {
             if (down) held.Add((method, code)); // If cancellation races the reply, cleanup must still release it.
-            using var key = PortalValue.Int(code); using var state = PortalValue.UInt(down ? 1u : 0u);
-            await NotifyAsync(method, [key, state], ct);
+            CheckAlive();
+            if (!enableInput || inputSession is null) throw new InvalidOperationException("键鼠控制未授权。");
+            if (!inputSession.Key(checked((uint)code), down, method == "button")) throw new IOException("EIS 输入设备暂不可用。");
             if (!down) held.Remove((method, code));
         }
         finally { inputGate.Release(); }
@@ -143,27 +139,22 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         try { await KeyAsync(method, code, false, timeout.Token); }
         catch (Exception e) when (e is IOException or InvalidOperationException or OperationCanceledException or DesktopSessionClosedException) { }
     }
-    public async Task TypeTextAsync(string text, CancellationToken ct)
+    public Task TypeTextAsync(string text, CancellationToken ct)
     {
-        HostControlInput.ValidateText(text);
-        foreach (var rune in text.Replace("\r\n", "\n").EnumerateRunes())
-        {
-            var symbol = rune.Value switch { 10 or 13 => 0xff0d, 9 => 0xff09, <= 255 => rune.Value, _ => 0x01000000 | rune.Value };
-            try { await KeyAsync("NotifyKeyboardKeysym", symbol, true, ct); }
-            finally { await ReleaseKeyAsync("NotifyKeyboardKeysym", symbol); }
-        }
+        ct.ThrowIfCancellationRequested(); CheckAlive(); HostControlInput.ValidateText(text);
+        if (!enableInput || inputSession is null) throw new InvalidOperationException("文字输入未授权。");
+        if (!inputSession.Text(text)) throw new NotSupportedException("当前桌面未提供 EIS 文字输入，请使用被控端输入法或复制粘贴。");
+        return Task.CompletedTask;
     }
     public IDesktopPointer CreatePointer(uint output)
     {
         if (!streams.ContainsKey(output)) throw new ArgumentException("所选显示器不可用。");
         return new Pointer(this, output);
     }
-    public async Task<IDesktopTouch?> CreateTouchAsync(CancellationToken ct)
+    public Task<IDesktopTouch?> CreateTouchAsync(CancellationToken ct)
     {
-        CheckAlive();
-        if (!enableInput || touchMappings.Count != streams.Count || touchMappings.Values.Distinct().Count() != streams.Count) return null;
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, closed.Token);
-        return await PortalTouchSession.OpenAsync(touchMappings, lifetime.Token);
+        ct.ThrowIfCancellationRequested(); CheckAlive();
+        return Task.FromResult(touch?.Acquire());
     }
     public IDesktopKeyboard CreateKeyboard() => new Keyboard(this);
     private sealed class Pointer(PortalDesktopSession owner, uint output) : IDesktopPointer
@@ -177,28 +168,25 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
                 WaylandVirtualPointer.AbsolutePayload(0, message.X, message.Y, coordinates, width, height);
                 var x = coordinates == PointerCoordinates.MacNormalized ? message.X : message.X / width;
                 var y = coordinates == PointerCoordinates.MacNormalized ? message.Y : message.Y / height;
-                var stream = owner.streams[output];
-                using var node = PortalValue.UInt(output);
-                using var px = PortalValue.Double(Math.Min(x * stream.Width, stream.Width - 1));
-                using var py = PortalValue.Double(Math.Min(y * stream.Height, stream.Height - 1));
-                await owner.NotifyAsync("NotifyPointerMotionAbsolute", [node, px, py], ct);
+                ct.ThrowIfCancellationRequested(); owner.CheckAlive();
+                if (owner.inputSession?.Point(output, x, y) != true) throw new IOException("EIS 指针暂不可用。");
             }
             else if (message.Action == MouseAction.Scroll)
             {
                 WaylandVirtualPointer.AxisPayload(0, 0, message.Y); WaylandVirtualPointer.AxisPayload(0, 1, message.X);
-                using var x = PortalValue.Double(message.X); using var y = PortalValue.Double(-message.Y);
-                await owner.NotifyAsync("NotifyPointerAxis", [x, y], ct);
+                ct.ThrowIfCancellationRequested(); owner.CheckAlive();
+                if (owner.inputSession?.Scroll(message.X, -message.Y) != true) throw new IOException("EIS 滚轮暂不可用。");
             }
             else if (message.Action is MouseAction.Press or MouseAction.Release or MouseAction.Click)
             {
                 var code = checked((int)WaylandVirtualPointer.LinuxButton(message.Button));
                 if (message.Action == MouseAction.Click && held.Contains(code)) return;
-                if (message.Action != MouseAction.Release) { held.Add(code); await owner.KeyAsync("NotifyPointerButton", code, true, ct); }
-                if (message.Action != MouseAction.Press) { await owner.KeyAsync("NotifyPointerButton", code, false, ct); held.Remove(code); }
+                if (message.Action != MouseAction.Release) { held.Add(code); await owner.KeyAsync("button", code, true, ct); }
+                if (message.Action != MouseAction.Press) { await owner.KeyAsync("button", code, false, ct); held.Remove(code); }
             }
             else throw new ArgumentException("不支持的鼠标操作。");
         }
-        public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("NotifyPointerButton", key); held.Clear(); }
+        public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("button", key); held.Clear(); }
     }
     private sealed class Keyboard(PortalDesktopSession owner) : IDesktopKeyboard
     {
@@ -209,11 +197,11 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
             var code = checked((int)value);
             if (message.Action == KeyAction.Click && held.Contains(code)) return;
             if (message.Action != KeyAction.Release && !held.Contains(code))
-            { held.Add(code); await owner.KeyAsync("NotifyKeyboardKeycode", code, true, ct); }
+            { held.Add(code); await owner.KeyAsync("key", code, true, ct); }
             if (message.Action != KeyAction.Press && held.Contains(code))
-            { await owner.KeyAsync("NotifyKeyboardKeycode", code, false, ct); held.Remove(code); }
+            { await owner.KeyAsync("key", code, false, ct); held.Remove(code); }
         }
-        public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("NotifyKeyboardKeycode", key); held.Clear(); }
+        public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("key", key); held.Clear(); }
     }
     public async ValueTask DisposeAsync()
     {
@@ -223,6 +211,7 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         closed.Cancel();
         try
         {
+            if (touch is not null) await touch.DisposeAsync();
             if (session is not null)
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));

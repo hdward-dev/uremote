@@ -21,7 +21,7 @@ public static class UuSigning
     private static readonly HashSet<string> V2Paths =
     [
         "/api/v2/room/join/share/by_code", "/api/v2/room/join/share/by_confirmation",
-        "/api/v2/room/share/upload_sign", "/api/v2/room/share/control_mode", "/api/v2/room/share/cancel_remote_assist"
+        "/api/v2/room/share/upload_sign", "/api/v2/room/share/control_mode", "/api/v2/room/share/upload_control_mode", "/api/v2/room/share/cancel_remote_assist"
     ];
 
     public static void ValidatePath(string path)

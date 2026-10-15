@@ -33,6 +33,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private readonly string settingsFile;
     private Task? session;
+    private readonly URemote.Core.HostAdmission admission = new(false);
     private DesktopHostLogin? login;
     private bool loginBusy;
     private bool loggingOut;
@@ -99,16 +100,27 @@ public sealed partial class URemoteView : UserControl, IDisposable
             if (outputs.Count == 0) screens.Children.Add(Text("开启被控后读取显示器；若出现系统授权窗口，请选择需要共享的屏幕。", 12, true));
             _ = RefreshLocalScreensAsync();
             hostSwitch.IsEnabled = true;
-            if (hostEnabled && Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") Start();
+            if (Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") StartCore();
             else { hostBadge.Text = "○  被控已关闭"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "被控已关闭"; detail.Text = "可手动开启被控。"; }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception e) { if (!disposed) { hostBadge.Text = "○  被控不可用"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush"); status.Text = "桌面共享不可用";
-            detail.Text = e is NotSupportedException or InvalidOperationException ? e.Message : "请检查 Wayland 会话、桌面 Portal 服务及 GLib / GStreamer 原生库。"; } }
+            detail.Text = e is NotSupportedException or InvalidOperationException ? e.Message : "请检查 Wayland 会话、桌面 Portal 服务及 GLib / GStreamer 原生库。";
+            if (Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") StartCore(); } }
     }
     private async void Start()
     {
-        if (disposed || loggingOut || starting || session is { IsCompleted: false }) return;
+        if (disposed || loggingOut || starting) return;
+        if (session is { IsCompleted: false })
+        {
+            hostEnabled = true;
+            try { File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", encoder.Text ?? "", allowAssistance, true))); }
+            catch (IOException) { detail.Text = "设置未能保存。"; }
+            admission.SetEnabled(true);
+            SetHostSwitch(true);
+            return;
+        }
+        hostEnabled = true;
         starting = true;
         hostSwitch.IsEnabled = false;
         try
@@ -151,9 +163,8 @@ public sealed partial class URemoteView : UserControl, IDisposable
         {
             if (!DesktopHostSession.ReadIdentity(path).State.IsAuthenticated) throw new InvalidOperationException();
             loginPanel.IsVisible = false;
-            if ((outputs.Count > 0 && selected.Length == 0) || !File.Exists(ffmpeg) || !Path.IsPathFullyQualified(ffmpeg)) throw new InvalidOperationException();
-            File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(path, ffmpeg, allowAssistance, true)));
-            hostEnabled = true;
+            if (hostEnabled && outputs.Count > 0 && selected.Length == 0) throw new InvalidOperationException();
+            File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(path, ffmpeg, allowAssistance, hostEnabled)));
         }
         catch
         {
@@ -171,13 +182,14 @@ public sealed partial class URemoteView : UserControl, IDisposable
         var enabled = input.IsChecked == true; var sound = audio.IsChecked == true; var sync = clipboard.IsChecked == true;
         sessionStop?.Dispose(); sessionStop = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var token = sessionStop.Token; restoreFailed = false;
-        SetHostSwitch(true); hostSwitch.IsEnabled = true; settings.IsEnabled = false; advancedSettings.IsEnabled = false;
+        admission.SetEnabled(hostEnabled);
+        SetHostSwitch(hostEnabled); hostSwitch.IsEnabled = true; settings.IsEnabled = false; advancedSettings.IsEnabled = false;
         hostBadge.Text = "●  正在上线"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppWarningBrush");
         status.Text = "正在上线"; detail.Text = "正在连接 UU 服务…";
         session = Task.Run(async () =>
         {
             try { await DesktopHostSession.RunAsync(path, ffmpeg, selected, enabled, limit, Report, token, sound, sync, indices,
-                connection => Post(() => UpdateControlConnection(connection))); }
+                connection => Post(() => UpdateControlConnection(connection)), admission); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception e)
             {
@@ -234,6 +246,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         {
             var running = session;
             Stop();
+            sessionStop?.Cancel();
             if (running is not null) await running;
             var controllers = remoteWindows.Values.ToArray();
             var tools = toolWindows.Values.ToArray();
@@ -269,6 +282,11 @@ public sealed partial class URemoteView : UserControl, IDisposable
     {
         switch (value)
         {
+            case "online-control-disabled":
+                if (admission.Enabled) break;
+                hostEnabled = false; SetHostSwitch(false); status.Text = "在线 · 不允许被控"; detail.Text = "";
+                hostBadge.Text = "●  在线 · 不允许被控"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush");
+                break;
             case "desktop-authorizing": status.Text = "准备桌面共享"; detail.Text = "若系统显示授权窗口，请选择共享的显示器并允许所需权限。"; break;
             case "desktop-ready": _ = RefreshAuthorizedScreensAsync(); break;
             case "assistance-code-rotated": UpdateAssistanceState(); break;
@@ -303,6 +321,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
     private void Post(Action action) => Dispatcher.UIThread.Post(() => { if (!disposed) action(); });
     private void Stop()
     {
+        hostEnabled = false;
         try
         {
             File.WriteAllText(settingsFile, JsonSerializer.Serialize(new Settings(identity.Text ?? "", encoder.Text ?? "", allowAssistance, false)));
@@ -310,10 +329,11 @@ public sealed partial class URemoteView : UserControl, IDisposable
         }
         catch { detail.Text = "停止设置未能保存，应用重启后可能再次开启被控。"; }
 
-        if (session is not { IsCompleted: false }) { SetHostSwitch(false); return; }
-        hostSwitch.IsEnabled = false;
-        status.Text = "正在停止";
-        sessionStop?.Cancel();
+        admission.SetEnabled(false);
+        SetHostSwitch(false);
+        status.Text = "在线 · 不允许被控";
+        detail.Text = "";
+        UpdateHostBadge();
     }
     public void Dispose()
     {
@@ -332,6 +352,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         foreach (var bitmap in localBitmaps) bitmap.Dispose();
         localBitmaps.Clear();
         sessionStop?.Dispose();
+        admission.Dispose();
         if (login is not null) login.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _ = initialize.ContinueWith(_ => lifetime.Dispose(), TaskScheduler.Default);
     }

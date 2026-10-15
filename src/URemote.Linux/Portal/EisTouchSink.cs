@@ -6,7 +6,7 @@ namespace URemote.Linux;
 
 // All libei access, including dispatch and teardown, is serialized. A remote
 // packet is a single touch frame; never dispatch halfway through its contacts.
-internal sealed class EisTouchSink : IDisposable
+internal sealed partial class EisTouchSink : IDisposable
 {
     private readonly object gate = new();
     private readonly Dictionary<nint, bool> devices = [];
@@ -17,13 +17,15 @@ internal sealed class EisTouchSink : IDisposable
     private bool disconnected;
     private uint sequence;
 
-    internal EisTouchSink(SafeFileHandle fd)
+    private readonly bool fullInput;
+    internal EisTouchSink(SafeFileHandle fd, bool fullInput = false)
     {
+        this.fullInput = fullInput;
         context = NativeEi.ei_new_sender(0);
         if (context == 0) throw new IOException("无法创建 EIS 触屏通道。");
         try
         {
-            NativeEi.ei_configure_name(context, "AsterDock touch");
+            NativeEi.ei_configure_name(context, "AsterDock input");
             var descriptor = checked((int)fd.DangerousGetHandle());
             // setup takes ownership, including on failure.
             var result = NativeEi.ei_setup_backend_fd(context, descriptor);
@@ -46,16 +48,21 @@ internal sealed class EisTouchSink : IDisposable
                     var device = NativeEi.ei_event_get_device(ev);
                     switch (NativeEi.ei_event_get_type(ev))
                     {
-                        case 2: disconnected = true; DropContacts(false); break;
-                        case 3: NativeEi.ei_seat_bind_capabilities(NativeEi.ei_event_get_seat(ev), 8, 0); break;
+                        case 2: disconnected = true; DropContacts(false); heldInput.Clear(); break;
+                        case 3:
+                            if (fullInput) NativeEi.BindInput(NativeEi.ei_event_get_seat(ev), 2, 4, 8, 16, 32, 64, 0);
+                            else NativeEi.ei_seat_bind_capabilities(NativeEi.ei_event_get_seat(ev), 8, 0);
+                            break;
                         case 5:
-                            if (NativeEi.ei_device_has_capability(device, 8)) devices.Add(NativeEi.ei_device_ref(device), false);
+                            if (fullInput || NativeEi.ei_device_has_capability(device, 8)) devices.Add(NativeEi.ei_device_ref(device), false);
                             break;
                         case 6:
+                            ForgetInput(device);
                             if (selectedDevice == device) DropContacts(false);
                             if (devices.Remove(device)) NativeEi.ei_device_unref(device);
                             break;
                         case 7:
+                            ForgetInput(device);
                             if (selectedDevice == device) DropContacts(false);
                             if (devices.ContainsKey(device)) devices[device] = false;
                             break;
@@ -72,13 +79,13 @@ internal sealed class EisTouchSink : IDisposable
             }
         }
     }
-    private (nint Device, nint Region)? Resolve(string id)
+    private (nint Device, nint Region)? Resolve(string id, int capability = 8)
     {
         if (context == 0 || disconnected || string.IsNullOrEmpty(id)) return null;
         (nint, nint)? found = null;
         foreach (var (device, ready) in devices)
         {
-            if (!ready) continue;
+            if (!ready || !NativeEi.ei_device_has_capability(device, capability)) continue;
             for (nuint index = 0; ; index++)
             {
                 var region = NativeEi.ei_device_get_region(device, index);
@@ -150,6 +157,7 @@ internal sealed class EisTouchSink : IDisposable
         {
             if (context == 0) return;
             DropContacts(true);
+            ReleaseInput();
             foreach (var (device, ready) in devices)
             {
                 if (ready && !disconnected) NativeEi.ei_device_stop_emulating(device);

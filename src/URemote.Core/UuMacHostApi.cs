@@ -125,10 +125,21 @@ public sealed class UuMacHostApi : IDisposable
         if (id is null || id.Length != 9 || !id.All(char.IsAsciiDigit)) throw new InvalidDataException("Invalid assistance identity.");
         return new(id);
     }
+    public Func<bool>? AdmissionAllowed { get; set; }
+
+    public async Task AnswerAssistanceModeAsync(string controlId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(controlId) || controlId.Length > 256) throw new ArgumentException("Invalid control request.");
+        using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v2/room/share/upload_control_mode",
+            JsonSerializer.Serialize(new { allow_control = (AdmissionAllowed?.Invoke() ?? true) && HostAssistance.IsEnabled(State.DeviceId), control_id = controlId,
+                control_mode = "by_password" }));
+        using var response = await SendAsync(request, ct);
+    }
+
     public async Task AnswerAssistanceAsync(string controlId, string salt, CancellationToken ct)
     {
         if (controlId.Length is < 1 or > 256 || salt.Length is < 1 or > 1024) throw new ArgumentException("Invalid challenge.");
-        var signatures = HostAssistance.Signatures(State.DeviceId, salt);
+        var signatures = (AdmissionAllowed?.Invoke() ?? true) ? HostAssistance.Signatures(State.DeviceId, salt) : new AssistanceSignatures(false, "", "");
         using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post, "/api/v2/room/share/upload_sign",
             JsonSerializer.Serialize(new { can_remote_control = signatures.Allowed, control_id = controlId,
                 sign = signatures.Primary, backup_sign = signatures.Backup }));

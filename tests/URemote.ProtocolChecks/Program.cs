@@ -45,6 +45,10 @@ using (var catalog = System.Text.Json.JsonDocument.Parse("""
     Check(!devices[0].ToString().Contains("Fixture") && !devices[0].ToString().Contains("self"), "catalog diagnostic text redacts device identity");
 }
 Check(HostAssistance.Sign("fixture-salt", "ABCDEFG2") == "de38978801bc9ec305467429f51e3acacc46567e8d8b13f8d788db62f51107e4", "assistance response uses SHA256 of salt followed by temporary code");
+foreach (var eventName in new[] { "push", "bmsg_push" })
+    Check(HostAssistance.ControlModeRequest(JsonNode.Parse("[\"" + eventName + "\",{\"type\":\"get_control_mode\",\"data\":{\"control_id\":\"fixture\"}}]")) == "fixture", "mode negotiation recognizes the official envelope without requiring a salt");
+foreach (var modePacket in new[] { "[]", "[\"bmsg_push\",{\"type\":\"remote_control\",\"data\":{\"control_id\":\"fixture\"}}]", "[\"other\",{\"type\":\"get_control_mode\",\"data\":{\"control_id\":\"fixture\"}}]", "[\"bmsg_push\",{\"type\":\"get_control_mode\",\"data\":{\"control_id\":42}}]", "[\"bmsg_push\",{\"type\":\"get_control_mode\",\"data\":{\"control_id\":\"\"}}]" })
+    Check(HostAssistance.ControlModeRequest(JsonNode.Parse(modePacket)) is null, "unrelated or malformed push cannot trigger a mode response");
 Check(HostAssistance.Challenge(JsonNode.Parse("{\"data\":{\"control_id\":\"fixture\",\"salt\":\"challenge\"}}")) is { ControlId: "fixture", Salt: "challenge" }, "assistance challenge extracts bounded routing fields");
 var temporary = HostAssistance.Code("fixture-local");
 Check(temporary.Length == 8 && temporary.All(c => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".Contains(c)) && HostAssistance.Code("fixture-local") == temporary, "temporary assistance code is stable in one process and uses official alphabet");

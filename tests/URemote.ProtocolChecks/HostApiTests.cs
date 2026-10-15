@@ -50,6 +50,16 @@ static class HostApiTests
         using var assistanceHandler = new AssistanceHandler();
         using var assistanceApi = new UuMacHostApi(loginApi.State, assistanceHandler);
         var device = loginApi.State.DeviceId;
+        using var modeHandler = new AssistanceModeHandler();
+        using var modeApi = new UuMacHostApi(loginApi.State, modeHandler);
+        foreach (var enabled in new[] { true, false, true })
+        {
+            HostAssistance.SetEnabled(device, enabled);
+            await modeApi.AnswerAssistanceModeAsync("fixture-control", default);
+            check(modeHandler.Allowed == enabled, "assistance preflight follows the local switch and always requires a password");
+        }
+        try { await modeApi.AnswerAssistanceModeAsync(" ", default); check(false, "empty mode request rejected"); }
+        catch (ArgumentException) { check(modeHandler.Requests == 3, "empty mode request never sends an HTTP response"); }
         HostAssistance.SetEnabled(device, true);
         foreach (var displayCustom in new[] { false, true })
         {
@@ -69,9 +79,58 @@ static class HostApiTests
         HostAssistance.Configure(device, "", false);
         await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
         check(assistanceHandler.Allowed && assistanceHandler.Primary.Length == 64 && assistanceHandler.Backup == "", "clearing custom code leaves only temporary authentication");
+        using var admission = new HostAdmission(false);
+        modeApi.AdmissionAllowed = () => admission.Enabled;
+        assistanceApi.AdmissionAllowed = () => admission.Enabled;
+        await modeApi.AnswerAssistanceModeAsync("fixture-control", default);
+        await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+        check(!modeHandler.Allowed && !assistanceHandler.Allowed && assistanceHandler.Primary == "" && assistanceHandler.Backup == "",
+            "disabled host rejects preflight and withholds both password signatures while online");
+        check(HostAssistance.IsEnabled(device), "host admission does not overwrite assistance preference");
+        var offlinePermission = admission.Snapshot();
+        admission.SetEnabled(true);
+        check(offlinePermission.Changed.IsCancellationRequested && admission.Enabled, "enabling admission wakes idle presence");
+        var activePermission = admission.Snapshot();
+        using var connection = CancellationTokenSource.CreateLinkedTokenSource(activePermission.Changed);
+        admission.SetEnabled(true);
+        check(!connection.IsCancellationRequested, "repeated enable does not interrupt a running connection");
+        await modeApi.AnswerAssistanceModeAsync("fixture-control", default);
+        await assistanceApi.AnswerAssistanceAsync("fixture-control", "fixture-salt", default);
+        check(modeHandler.Allowed && assistanceHandler.Allowed, "reenabling admission restores password validation");
+        admission.SetEnabled(false);
+        check(connection.IsCancellationRequested, "disabling admission cancels existing media and terminal lifetime");
+        admission.SetEnabled(true);
+        check(connection.IsCancellationRequested && !admission.Snapshot().Changed.IsCancellationRequested,
+            "rapid reenable never revives a revoked control generation");
+        HostAssistance.SetEnabled(device, false);
+        await modeApi.AnswerAssistanceModeAsync("fixture-control", default);
+        check(!modeHandler.Allowed, "enabling host does not bypass disabled assistance");
+        HostAssistance.SetEnabled(device, true);
         using var uninitialized = new UuMacHostApi(new(ClientId: "fixture-client"), loginHandler);
         try { await uninitialized.SendLoginCodeAsync("15500000000"); check(false, "SMS requires host initialization"); }
         catch (InvalidOperationException) { check(loginHandler.Requests == 2, "SMS requires host initialization"); }
+    }
+
+    private sealed class AssistanceModeHandler : HttpMessageHandler
+    {
+        public bool Allowed;
+        public int Requests;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests++;
+            var body = await request.Content!.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(body);
+            var data = doc.RootElement;
+            if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/api/v2/room/share/upload_control_mode"
+                || data.EnumerateObject().Count() != 3 || data.GetProperty("control_id").GetString() != "fixture-control"
+                || data.GetProperty("control_mode").GetString() != "by_password"
+                || request.Headers.Authorization?.Parameter != "fixture-token") throw new Exception("Invalid assistance mode response.");
+            Allowed = data.GetProperty("allow_control").GetBoolean();
+            var headers = request.Headers.ToDictionary(x => x.Key, x => string.Join(",", x.Value));
+            if (UuSigning.ComputeSignature(headers, "POST", request.RequestUri.AbsolutePath, body) != request.Headers.GetValues("X-Param-SIGN").Single())
+                throw new Exception("Assistance mode signature does not cover request.");
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"code\":0,\"data\":null}") };
+        }
     }
 
     private sealed class AssistanceHandler : HttpMessageHandler

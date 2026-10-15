@@ -131,7 +131,9 @@ internal static class HostInput
                 }
                 else if (input?.Text is { } committed)
                 {
-                    await DesktopBackend.TypeTextAsync(committed, ct);
+                    try { await DesktopBackend.TypeTextAsync(committed, ct); }
+                    catch (NotSupportedException)
+                    { if (observed.Add("text-unavailable")) report("committed-text-unavailable;use-remote-ime-or-paste"); continue; }
                     if (observed.Add("committed-text")) report("committed-text-applied");
                 }
                 else if (input?.Key is { } key) await keyboard!.ApplyAsync(key, ct);

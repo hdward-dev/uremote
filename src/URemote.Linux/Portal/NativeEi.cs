@@ -15,6 +15,13 @@ internal static class NativeEi
     [DllImport(Lib)] internal static extern nint ei_event_unref(nint ev);
     // A fixed touch-only invocation of the C variadic API, terminated by NULL.
     [DllImport(Lib)] internal static extern void ei_seat_bind_capabilities(nint seat,int touch,nint end);
+    [DllImport(Lib, EntryPoint = "ei_seat_bind_capabilities")] internal static extern void BindInput(nint seat, int pointer, int keyboard, int touch, int scroll, int button, int text, nint end);
+    [DllImport(Lib)] internal static extern void ei_device_pointer_motion_absolute(nint device, double x, double y);
+    [DllImport(Lib)] internal static extern void ei_device_keyboard_key(nint device, uint code, [MarshalAs(UnmanagedType.I1)] bool down);
+    [DllImport(Lib)] internal static extern void ei_device_button_button(nint device, uint code, [MarshalAs(UnmanagedType.I1)] bool down);
+    [DllImport(Lib)] internal static extern void ei_device_scroll_delta(nint device, double x, double y);
+    [DllImport(Lib)] internal static extern void ei_device_scroll_stop(nint device, [MarshalAs(UnmanagedType.I1)] bool x, [MarshalAs(UnmanagedType.I1)] bool y);
+    [DllImport(Lib)] internal static extern void ei_device_text_utf8(nint device, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
     [DllImport(Lib)] internal static extern nint ei_device_ref(nint device);
     [DllImport(Lib)] internal static extern nint ei_device_unref(nint device);
     [DllImport(Lib)] [return:MarshalAs(UnmanagedType.I1)] internal static extern bool ei_device_has_capability(nint device,int cap);
