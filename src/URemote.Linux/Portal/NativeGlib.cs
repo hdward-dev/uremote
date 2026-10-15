@@ -6,6 +6,7 @@ namespace URemote.Linux;
 internal static class NativeGlib
 {
     internal const string Glib = "libglib-2.0.so.0", Gio = "libgio-2.0.so.0", Object = "libgobject-2.0.so.0";
+    [DllImport(Glib)] internal static extern int g_variant_get_boolean(nint value);
     [DllImport(Object)] internal static extern void g_object_unref(nint value);
     [DllImport(Glib)] internal static extern void g_error_free(nint error);
     [DllImport(Glib)] internal static extern nint g_variant_ref_sink(nint value);
@@ -77,6 +78,8 @@ internal sealed class PortalValue : IDisposable
     internal static PortalValue Int(int value) => Float(NativeGlib.g_variant_new_int32(value));
     internal static PortalValue Bool(bool value) => Float(NativeGlib.g_variant_new_boolean(value ? 1 : 0));
     internal static PortalValue Double(double value) => Float(NativeGlib.g_variant_new_double(value));
+    internal static PortalValue Variant(PortalValue value) => Float(NativeGlib.g_variant_new_variant(value.Handle));
+    internal bool Boolean() { Require("b"); return NativeGlib.g_variant_get_boolean(Handle) != 0; }
     internal static PortalValue Tuple(params PortalValue[] values) => Float(NativeGlib.g_variant_new_tuple(values.Select(v => v.Handle).ToArray(), (nuint)values.Length));
     internal static PortalValue Dict(params (string Key, PortalValue Value)[] values)
     {

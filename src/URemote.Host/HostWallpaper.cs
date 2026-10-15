@@ -9,7 +9,7 @@ internal static class HostWallpaper
     private sealed record Cache(string Hash,DateTimeOffset Uploaded,string DeviceId = "");
     public static async Task RunAsync(LoginState state,string ffmpeg,string identityPath,Action<string> report,CancellationToken ct)
     {
-        if(!OperatingSystem.IsLinux())return;
+        if(!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())return;
         using var api=new UuWallpaperApi(state);
         var cachePath=identityPath+".wallpaper.json";
         Cache? cache=null;

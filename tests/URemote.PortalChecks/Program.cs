@@ -3,6 +3,8 @@ using URemote.Linux;
 
 var checks = 0;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); checks++; Console.WriteLine("PASS: " + name); }
+if (args.Contains("--desktop-actions")) { await DesktopActionChecks.RunAsync(Check); Console.WriteLine($"{checks} desktop action checks passed."); return; }
+if (args.Contains("--desktop-kde-live")) { await DesktopActionChecks.LiveKdeAsync(Check); return; }
 if (args.Contains("--touch-lifetime")) { await SharedTouchChecks.RunAsync(Check); return; }
 if (args.FirstOrDefault() == "--input-probe")
 {

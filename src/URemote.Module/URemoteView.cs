@@ -55,7 +55,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
 
     public URemoteView(string dataDirectory)
     {
-        if (OperatingSystem.IsLinux()) termination = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) termination = System.Runtime.InteropServices.PosixSignalRegistration.Create(
             System.Runtime.InteropServices.PosixSignal.SIGTERM, context =>
             {
                 context.Cancel = true;
@@ -69,6 +69,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
             { identity.Text = saved.Identity; encoder.Text = saved.Encoder; allowAssistance = saved.AllowAssistance; hostEnabled = saved.HostEnabled; } } catch (IOException) { } catch (JsonException) { }
         try { URemote.Core.HostAssistance.SetEnabled(DesktopHostSession.ReadIdentity(identity.Text!).State.DeviceId, allowAssistance); } catch { }
         LoadAssistanceSettings();
+        if (OperatingSystem.IsMacOS()) { audio.IsChecked = false; audio.IsEnabled = false; audio.Content = "macOS 系统声音尚未支持"; input.Content = "允许键鼠控制"; }
         BuildInterface(dataDirectory);
         sendCode.Click += async (_, _) => await LoginAsync(false);
         sendCodeTimer.Tick += (_, _) => UpdateSendCodeState();
@@ -82,14 +83,23 @@ public sealed partial class URemoteView : UserControl, IDisposable
         };
         initialize = InitializeAsync();
     }
-    private static string FindExecutable(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
-        .Select(p => Path.Combine(p, name)).FirstOrDefault(File.Exists) ?? "";
+    private static string FindExecutable(string name)
+    {
+        var directories = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).ToList();
+        if (OperatingSystem.IsMacOS())
+        {
+            var rid = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "osx-arm64" : "osx-x64";
+            directories.Insert(0, Path.Combine(Path.GetDirectoryName(typeof(URemoteView).Assembly.Location)!, "ffmpeg", rid));
+            directories.AddRange(["/opt/homebrew/bin", "/usr/local/bin"]);
+        }
+        return directories.Select(p => Path.Combine(p, name)).FirstOrDefault(File.Exists) ?? "";
+    }
     private async Task InitializeAsync()
     {
         try
         {
             if (Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") _ = RefreshDevicesAsync();
-            if (!OperatingSystem.IsLinux()) { status.Text = "当前被控后端仅支持 Linux / Wayland"; hostSwitch.IsEnabled = false; return; }
+            if (!(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())) { status.Text = "当前被控后端支持 Linux / Wayland 和 macOS"; hostSwitch.IsEnabled = false; return; }
             var globals = await DesktopBackend.DiscoverAsync(lifetime.Token);
             if (disposed) return;
             foreach (var id in globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5))
@@ -150,7 +160,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         catch (Exception e)
         {
             Console.WriteLine("host-display-discovery-failed;type=" + e.GetType().Name);
-            if (!disposed) { SetHostSwitch(false); status.Text = "无法访问显示器"; detail.Text = "请确认显示器已连接，并在 Wayland 桌面中重新开启被控。"; }
+            if (!disposed) { SetHostSwitch(false); status.Text = "无法访问显示器"; detail.Text = "请确认显示器已连接，并在本机桌面中重新开启被控。"; }
         }
         finally { starting = false; if (!disposed) hostSwitch.IsEnabled = true; }
     }
@@ -227,7 +237,13 @@ public sealed partial class URemoteView : UserControl, IDisposable
                 detail.Text = "验证码请求已发送。请输入收到的验证码；不会自动重发。";
             }
         }
-        catch { if (!disposed) detail.Text = "登录操作未完成，请检查手机号、验证码和网络；重新发送至少间隔 60 秒。"; }
+        catch (Exception e)
+        {
+            Console.WriteLine("login-failed;stage=" + (login?.Operation ?? "local-profile") + ";type=" + e.GetType().Name + ";inner=" + e.InnerException?.GetType().Name);
+            if (!disposed) detail.Text = e is OperationCanceledException or HttpRequestException
+                ? "连接登录服务失败或超时，请检查网络和 DNS；不会自动重新发送验证码。"
+                : "登录操作未完成，请检查手机号、验证码和网络；重新发送至少间隔 60 秒。";
+        }
         finally { loginBusy = false; sendingCode = false; if (!disposed) { UpdateSendCodeState(); completeLogin.IsEnabled = true; hostSwitch.IsEnabled = true; } }
     }
     private void UpdateSendCodeState()
@@ -236,7 +252,7 @@ public sealed partial class URemoteView : UserControl, IDisposable
         var seconds = login?.CodeResendSeconds ?? 0;
         sendCode.Content = seconds > 0 ? $"重新发送（{seconds}s）" : sendingCode ? "正在发送…" : "发送验证码";
         sendCode.IsEnabled = !loginBusy && !loggingOut && seconds == 0;
-        if (seconds > 0) sendCodeTimer.Start(); else sendCodeTimer.Stop();
+        if (seconds > 0 || sendingCode) sendCodeTimer.Start(); else sendCodeTimer.Stop();
     }
     private async Task LogoutAsync()
     {
@@ -284,9 +300,11 @@ public sealed partial class URemoteView : UserControl, IDisposable
         {
             case "online-control-disabled":
                 if (admission.Enabled) break;
-                hostEnabled = false; SetHostSwitch(false); status.Text = "在线 · 不允许被控"; detail.Text = "";
+                hostEnabled = false; SetHostSwitch(false); status.Text = "在线 · 不允许被控"; if (!OperatingSystem.IsMacOS()) detail.Text = "";
                 hostBadge.Text = "●  在线 · 不允许被控"; ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppMutedBrush");
                 break;
+            case "desktop-action-unavailable;reason=gnome-show-desktop-shortcut-unset": detail.Text = "GNOME 未设置可用的“显示桌面”快捷键，请在系统键盘快捷键设置中配置；U远程不会修改系统快捷键。"; break;
+            case "macos-control-unavailable": detail.Text = "请检查编码器路径，并在 macOS 系统设置 → 隐私与安全性中允许星栈的屏幕录制与辅助功能权限，然后重新开启被控。"; break;
             case "desktop-authorizing": status.Text = "准备桌面共享"; detail.Text = "若系统显示授权窗口，请选择共享的显示器并允许所需权限。"; break;
             case "desktop-ready": _ = RefreshAuthorizedScreensAsync(); break;
             case "assistance-code-rotated": UpdateAssistanceState(); break;

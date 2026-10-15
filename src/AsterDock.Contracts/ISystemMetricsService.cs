@@ -20,7 +20,11 @@ public sealed record SystemMetricsSnapshot(
     long TotalMemoryBytes,
     double DiskUsage,
     long DownloadBytesPerSecond,
-    long UploadBytesPerSecond);
+    long UploadBytesPerSecond)
+{
+    public long? GpuUsedMemoryBytes { get; init; }
+    public long? GpuTotalMemoryBytes { get; init; }
+}
 
 /// <summary>
 /// Container-owned, shared hardware metrics stream. Sampling starts with the

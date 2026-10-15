@@ -26,6 +26,9 @@ public sealed class LocalDesktopWindow : Window
     private int buttons, mouseX, mouseY;
     private volatile bool closed;
     public Task Completion { get; private set; } = Task.CompletedTask;
+    public event Action? Connected;
+    private bool connected;
+    internal bool IsConnected => connected && !closed && !Completion.IsCompleted;
 
     public LocalDesktopWindow(LocalDesktopOptions options)
     {
@@ -43,7 +46,12 @@ public sealed class LocalDesktopWindow : Window
         var hint = new TextBlock { Text = "点击画面控制 · Ctrl + Alt + Esc 释放键鼠 · 关闭窗口断开连接", Foreground = Brushes.LightGray, FontSize = 12, Margin = new Thickness(16, 8) };
         Grid.SetRow(hint, 2); body.Children.Add(hint); Content = body;
         session.Frame += frame => { lock (frameGate) { if (!closed) latest = frame; } };
-        session.Status += value => Dispatcher.UIThread.Post(() => { if (!closed) status.Text = value; });
+        session.Status += value => Dispatcher.UIThread.Post(() =>
+        {
+            if (closed) return;
+            status.Text = value;
+            if (!connected && value.StartsWith("已连接", StringComparison.Ordinal)) { connected = true; Connected?.Invoke(); }
+        });
         paintTimer.Tick += (_, _) => Paint();
         desktop.PointerPressed += (_, e) =>
         {

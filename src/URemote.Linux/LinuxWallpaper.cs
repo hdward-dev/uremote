@@ -15,6 +15,11 @@ public static class LinuxWallpaper
         JsonObject? session=null;
         JsonObject? settings=null;
         var source=Environment.GetEnvironmentVariable("UREMOTE_WALLPAPER");
+        if (string.IsNullOrEmpty(source) && OperatingSystem.IsMacOS())
+        {
+            source = MacDesktop.WallpaperPath();
+            if (string.IsNullOrEmpty(source)) return null;
+        }
         if (string.IsNullOrEmpty(source) && DesktopEnvironmentInfo.Current.Name == "KDE Plasma")
         {
             var dataRoots = new[] { Environment.GetEnvironmentVariable("XDG_DATA_HOME") ?? Path.Combine(home,".local/share") }
@@ -49,7 +54,8 @@ public static class LinuxWallpaper
             }
             if(!Path.IsPathFullyQualified(source)||!File.Exists(source)||new FileInfo(source).Length>100_000_000)return null;
             var target=Path.Combine(scratch,"wallpaper.png");
-            await RunAsync(ffmpeg,["-hide_banner","-loglevel","error","-nostdin","-i",source,"-frames:v","1","-vf","scale=960:540:force_original_aspect_ratio=increase,crop=960:540","-map_metadata","-1",target],ct);
+            if (OperatingSystem.IsMacOS()) { ct.ThrowIfCancellationRequested(); MacDesktop.RenderWallpaper(source, target); }
+            else await RunAsync(ffmpeg,["-hide_banner","-loglevel","error","-nostdin","-i",source,"-frames:v","1","-vf","scale=960:540:force_original_aspect_ratio=increase,crop=960:540","-map_metadata","-1",target],ct);
             var bytes=await File.ReadAllBytesAsync(target,ct);if(bytes.Length>5_000_000)throw new IOException("Wallpaper preview exceeds size limit.");return bytes;
         } finally {Directory.Delete(scratch,true);}
     }

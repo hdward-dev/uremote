@@ -13,12 +13,13 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     private readonly UuMacHostApi api;
     private string? pendingMobile;
     private DateTimeOffset sentAt;
+    public string Operation { get; private set; } = "idle";
     public int CodeResendSeconds => (int)Math.Clamp(Math.Ceiling(60 - (DateTimeOffset.UtcNow - sentAt).TotalSeconds), 0, 60);
     private DesktopHostLogin(string path, FileStream identityLock, SavedHostIdentity identity)
     { this.path = path; this.identityLock = identityLock; this.identity = identity; api = new(identity.State); }
     public static DesktopHostLogin Open(string path)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         path = Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var gate = new FileStream(path + ".lock", new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite,
             Share = FileShare.None, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
@@ -59,11 +60,13 @@ public sealed class DesktopHostLogin : IAsyncDisposable
         if (CodeResendSeconds > 0) throw new InvalidOperationException("SMS cooldown.");
         if (api.State.DeviceId.Length == 0)
         {
+            Operation = "device-initialization";
             await api.InitializeAsync(identity.Profile, ct);
             identity = identity with { State = api.State, Status = "initialized-not-logged-in", Platform = HostWirePlatform.Windows ? 1 : 4 };
             await SaveAsync(ct);
         }
         sentAt = DateTimeOffset.UtcNow; // An uncertain network response must not immediately resend SMS.
+        Operation = "sms-request";
         await api.SendLoginCodeAsync(mobile, ct: ct);
         pendingMobile = mobile;
     }
@@ -81,7 +84,7 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     }
     private async Task SaveAsync(CancellationToken ct)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         var temp = path + ".new-" + Guid.NewGuid().ToString("N");
         try
         {

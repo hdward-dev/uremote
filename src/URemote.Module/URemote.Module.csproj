@@ -4,4 +4,11 @@
 <ItemGroup><None Update="app.json" CopyToOutputDirectory="PreserveNewest"/><None Update="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest"/><None Include="licenses/*" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
 <ItemGroup><Content Include="Native/bin/**/*" Link="native/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 <ItemGroup><InternalsVisibleTo Include="URemote.LocalChecks" /></ItemGroup>
+<Target Name="BuildMacDesktopBridge" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(DesignTimeBuild)' != 'true'">
+  <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../scripts/build-uremote-mac.sh&quot; &quot;$(RuntimeIdentifier)&quot;" />
+  <ItemGroup>
+    <Content Remove="Native/bin/osx-*/liburemote-mac.dylib" />
+    <Content Include="Native/bin/**/liburemote-mac.dylib" Link="native/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Target>
 </Project>

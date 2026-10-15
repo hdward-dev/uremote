@@ -7,6 +7,7 @@ public static class LinuxDeviceProfile
 
     public static HostDeviceProfile Refresh(HostDeviceProfile profile)
     {
+        if (OperatingSystem.IsMacOS()) return MacDeviceProfile.Refresh(profile);
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
         var cpu = File.ReadLines("/proc/cpuinfo").FirstOrDefault(l => l.StartsWith("model name", StringComparison.Ordinal))?.Split(':', 2)[1].Trim()
             ?? System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString();

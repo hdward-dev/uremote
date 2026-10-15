@@ -11,6 +11,7 @@ public static class HostPreview
     public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null)
     {
         report ??= Console.WriteLine;
+        if (OperatingSystem.IsMacOS() && enableAudio) { enableAudio = false; report("audio-unavailable"); }
         await using var ownedTerminals = terminalManager is null ? new HostTerminalManager() : null;
         terminalManager ??= ownedTerminals!;
         var dimensions = new List<(int Width, int Height)>();
@@ -222,7 +223,7 @@ public static class HostPreview
                             { ["app_control_id"] = id.AppControlId, ["ice_id"] = id.IceId }, ct: peerToken);
                             report("ice-completion-notified");
                         }, report, profiles);
-                        input = terminal ? HostTerminalPeer.RunAsync(media, terminalManager, enableInput, peerStop.Token, report)
+                        input = terminal ? HostTerminalPeer.RunAsync(media, terminalManager, enableInput && !OperatingSystem.IsMacOS(), peerStop.Token, report)
                             : HostInput.RunAsync(media, outputs, peerStop.Token, report, enableInput && !fileOnly, enableClipboard && !fileOnly, profiles, inputApplied: () =>
                             {
                                 lock (connectionGate)

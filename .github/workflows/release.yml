@@ -25,8 +25,10 @@ jobs:
           name: uremote-rdp-${{ matrix.rid }}
           path: src/URemote.Module/Native/bin/${{ matrix.rid }}/*
           if-no-files-found: error
+  native-macos:
+    uses: ./.github/workflows/uremote-macos.yml
   release:
-    needs: native-rdp
+    needs: [native-rdp, native-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -55,6 +57,10 @@ jobs:
             mkdir -p "src/URemote.Module/Native/bin/$rid"
             cp "artifacts/uremote-native/uremote-rdp-$rid/"* "src/URemote.Module/Native/bin/$rid/"
           done
+      - uses: actions/download-artifact@v7
+        with:
+          name: uremote-macos-native
+          path: src/URemote.Module/Native/bin
       - run: dotnet restore URemote.slnx
       - run: dotnet build URemote.slnx -c Release --no-restore -m:1
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
@@ -70,8 +76,8 @@ jobs:
           U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
           星栈下载：https://github.com/hdward-dev/asterdock/releases
 
-          本次更新加入 Portal 持久授权：支持的桌面首次授权后可在重开应用时恢复屏幕与输入权限；同时包含在线状态与被控开关分离、合并桌面授权及协助连接修复。
-          47 项隔离 Portal 检查通过；是否免弹窗取决于桌面后端授权，KDE/GNOME 跨重启实测待验证。
+          本次更新加入 macOS 被控、原生屏幕采集与键鼠、壁纸预览及桌面快捷操作，并修复 macOS 刷新率单位。KDE 桌面快捷操作已实机验证；GNOME 显示桌面沿用已有系统快捷键，不修改系统设置。
+          macOS 系统音频、触控和被控终端尚未支持；GNOME 桌面快捷操作仍需实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES
           gh release create "v$PLUGIN_VERSION" artifacts/release/AsterDock-App-u-remote.appbundle artifacts/release/SHA256SUMS.txt \

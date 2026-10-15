@@ -12,6 +12,7 @@ public sealed record DesktopEnvironmentInfo(string Name, string SessionType)
         if (string.IsNullOrWhiteSpace(desktop)) desktop = read("DESKTOP_SESSION");
         var names = (desktop ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var name = names.Any(n => n.Equals("KDE", StringComparison.OrdinalIgnoreCase) || n.Equals("plasma", StringComparison.OrdinalIgnoreCase)) ? "KDE Plasma"
+            : names.Any(n => n.Equals("GNOME", StringComparison.OrdinalIgnoreCase)) ? "GNOME"
             : names.Any(n => n.Equals("niri", StringComparison.OrdinalIgnoreCase)) ? "niri"
             : names.Length > 0 ? string.Join(" · ", names) : "未知桌面";
         var type = read("XDG_SESSION_TYPE")?.ToLowerInvariant();

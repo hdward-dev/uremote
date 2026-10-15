@@ -9,7 +9,7 @@ public sealed class WaylandClipboard : IAsyncDisposable
     public async Task<string?> ReadAsync(CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(2));
-        using var process = Process.Start(Start("wl-paste", false, "--no-newline", "--type", "text")) ?? throw new IOException();
+        using var process = Process.Start(OperatingSystem.IsMacOS() ? Start("/usr/bin/pbpaste", false) : Start("wl-paste", false, "--no-newline", "--type", "text")) ?? throw new IOException();
         using var cancel = timeout.Token.Register(() => Kill(process));
         var errors = process.StandardError.ReadToEndAsync();
         using var bytes = new MemoryStream(); var buffer = new byte[4096];
@@ -31,15 +31,16 @@ public sealed class WaylandClipboard : IAsyncDisposable
     {
         if (Encoding.UTF8.GetByteCount(text) > 65536 || text.Contains('\0')) throw new ArgumentException("Clipboard text rejected.");
         await StopOwnerAsync();
-        owner = Process.Start(Start("wl-copy", true, "--foreground", "--type", "text/plain;charset=utf-8")) ?? throw new IOException();
+        owner = Process.Start(OperatingSystem.IsMacOS() ? Start("/usr/bin/pbcopy", true) : Start("wl-copy", true, "--foreground", "--type", "text/plain;charset=utf-8")) ?? throw new IOException();
         ownerError = owner.StandardError.ReadToEndAsync();
         var bytes = Encoding.UTF8.GetBytes(text);
         try { await owner.StandardInput.BaseStream.WriteAsync(bytes, ct); owner.StandardInput.Close(); }
         finally { Array.Clear(bytes); }
+        if (OperatingSystem.IsMacOS()) { await owner.WaitForExitAsync(ct); if (owner.ExitCode != 0) throw new IOException("macOS 剪贴板写入失败。"); }
     }
     private static ProcessStartInfo Start(string exe, bool input, params string[] args)
     {
-        var path = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(p => Path.Combine(p, exe)).FirstOrDefault(File.Exists)
+        var path = Path.IsPathFullyQualified(exe) && File.Exists(exe) ? exe : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(p => Path.Combine(p, exe)).FirstOrDefault(File.Exists)
             ?? throw new FileNotFoundException("Install wl-clipboard for clipboard synchronization.");
         var start = new ProcessStartInfo(path) { UseShellExecute = false, RedirectStandardInput = input, RedirectStandardOutput = !input, RedirectStandardError = true };
         foreach (var arg in args) start.ArgumentList.Add(arg); return start;

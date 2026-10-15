@@ -27,6 +27,13 @@ public sealed class StreamingH264Encoder : IAsyncDisposable
             "-pix_fmt", "yuv420p", "-crf", crf.ToString(), "-maxrate", bitrate.ToString(), "-bufsize", (bitrate / 2).ToString(),
             "-x264-params", "aud=1:repeat-headers=1:keyint=infinite:scenecut=0", "-threads", "2",
             "-flush_packets", "1", "-f", "h264", "pipe:1"];
+        if (OperatingSystem.IsMacOS())
+        {
+            var codec = Array.IndexOf(args, "-c:v"); var tail = Array.IndexOf(args, "-flush_packets");
+            args = [..args[..codec], "-c:v", "h264_videotoolbox", "-realtime", "1", "-allow_sw", "1", "-bf", "0",
+                "-profile:v", "baseline", "-level:v", "5.2", "-pix_fmt", "yuv420p", "-b:v", bitrate.ToString(),
+                "-g", "600", "-bsf:v", "h264_metadata=aud=insert", ..args[tail..]];
+        }
         foreach (var arg in args) start.ArgumentList.Add(arg);
         process = Process.Start(start) ?? throw new IOException("Cannot start video encoder.");
         errors = process.StandardError.ReadToEndAsync();

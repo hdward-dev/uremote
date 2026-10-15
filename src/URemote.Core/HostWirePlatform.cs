@@ -10,7 +10,8 @@ public static class HostWirePlatform
     public static bool Windows { get; } = ResolveWindows(Environment.GetEnvironmentVariable("UREMOTE_HOST_PLATFORM"));
     public static bool ResolveWindows(string? value) => value switch
     {
-        null or "" or "windows" => true,
+        null or "" => !OperatingSystem.IsMacOS(),
+        "windows" => true,
         "mac" => false,
         _ => throw new InvalidOperationException("UREMOTE_HOST_PLATFORM must be windows or mac.")
     };

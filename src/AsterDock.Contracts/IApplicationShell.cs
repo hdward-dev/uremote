@@ -20,6 +20,7 @@ public interface IApplicationShell
 
     void OpenApplication(string applicationId);
     void ShowSettings();
+    void ShowApplicationDiscovery() => ShowSettings();
     void ShowApplicationSwitcher();
     bool TryExecuteApplicationAction(string applicationId, string actionId);
 }

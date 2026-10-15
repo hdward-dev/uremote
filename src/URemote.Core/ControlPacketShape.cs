@@ -27,7 +27,7 @@ public static class ControlPacketShape
                     ProtoFields fields;
                     try { fields = ProtoFields.Read(nested); } catch (FormatException) { continue; }
                     shape += ";nested" + tag + "=" + Shape(fields);
-                    if (tag == 3) shape += ";echoAction=" + (fields.Int(1) is 0 or 1 ? fields.Int(1) : -1)
+                    if (tag == 3) shape += ";simpleAction=" + (fields.Int(1) is >= 0 and <= 27 ? fields.Int(1) : -1)
                         + ";argsPresent=" + (fields.Bytes(2)?.Length > 0);
                 }
             return shape;

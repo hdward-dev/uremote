@@ -13,7 +13,7 @@ public static class DesktopHostSession
 {
     public static SavedHostIdentity ReadIdentity(string path)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0
             || (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
                 | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
@@ -24,7 +24,7 @@ public static class DesktopHostSession
     public static async Task RunAsync(string identityPath, string ffmpeg, IReadOnlyList<uint> outputs,
         bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null, HostAdmission? admission = null)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
+        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
         if (outputs.Count > 5 || outputs.Distinct().Count() != outputs.Count || (duration != Timeout.InfiniteTimeSpan && (duration <= TimeSpan.Zero
             || duration > TimeSpan.FromHours(1))))
             throw new ArgumentException("无效的被控设置。");
@@ -118,6 +118,7 @@ public static class DesktopHostSession
                 {
                     admission.SetEnabled(false);
                     report("control-unavailable;type=" + e.GetType().Name);
+                    if (OperatingSystem.IsMacOS()) report("macos-control-unavailable");
                 }
                 finally
                 {

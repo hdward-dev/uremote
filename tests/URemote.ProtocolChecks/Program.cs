@@ -20,6 +20,14 @@ void Reject(Action action, string label)
     throw new Exception("FAIL: " + label);
 }
 TouchTests.Run(Check);
+Check(HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 2 }) == HostDesktopAction.ShowDesktop, "official show desktop action");
+Check(HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 3 }) == HostDesktopAction.ShowWindows, "official show windows action");
+Check(HostDesktopActions.Decode("TEXT_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 2 }) is null
+    && HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", true, new byte[] { 0x1a, 2, 8, 2 }) is null, "desktop actions require binary control channel");
+Check(HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 9 }) is null
+    && HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 0 }) is null, "unknown and missing desktop actions ignored");
+Reject(() => HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 4, 8, 2, 8, 3 }), "ambiguous desktop action rejected");
+
 Check(HostWirePlatform.Windows && HostWirePlatform.ResolveWindows("") && HostWirePlatform.ResolveWindows("windows"), "release defaults to Windows without launcher environment overrides");
 Check(!HostWirePlatform.ResolveWindows("mac"), "explicit Mac diagnostic override remains available");
 var bundle = new BundledIceCandidates("v=0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:1\r\n");

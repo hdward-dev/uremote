@@ -93,7 +93,7 @@ public sealed partial class URemoteView
         ApplyTheme(detail, TextBlock.ForegroundProperty, "AppMutedBrush"); detail.FontSize = 13;
         detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text);
         detail.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text); };
-        ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush"); metrics.FontSize = 12; metrics.Text = "双屏桌面 · 远程终端";
+        ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush"); metrics.FontSize = 12; metrics.Text = OperatingSystem.IsMacOS() ? "多屏桌面 · 键鼠控制" : "双屏桌面 · 远程终端";
         ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush");
         status.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) UpdateHostBadge(); };
         var brand = new StackPanel { Spacing = 5, Margin = new Thickness(14, 12, 0, 30), Children = { Text("U远程", 25), Text("远程工作空间", 12, true) } };
@@ -149,7 +149,7 @@ public sealed partial class URemoteView
         advancedSettings.Children.Add(Text("路径在下次启动被控时保存。正常使用无需修改。", 12, true));
         var accountPage = BuildAccountPage();
         var assistancePage = BuildConnectAssistancePage();
-        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }, BuildLocalConnectionPage()];
+        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }, BuildLocalConnectionPage(dataDirectory)];
         var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 2) };
         hostActions.Children.Add(Text("允许本机被控", 14)); Grid.SetColumn(hostSwitch, 1); hostActions.Children.Add(hostSwitch);
         hostSwitch.MinWidth = 0;

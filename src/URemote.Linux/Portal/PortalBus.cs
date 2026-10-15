@@ -37,10 +37,10 @@ internal sealed class PortalBus : IAsyncDisposable
         try { using var registration = ct.Register(() => NativeGlib.g_cancellable_cancel(cancel)); return action(cancel); }
         finally { NativeGlib.g_object_unref(cancel); }
     }
-    internal Task<PortalValue> CallAsync(string iface, string method, PortalValue args, CancellationToken ct, string path = Desktop)
+    internal Task<PortalValue> CallAsync(string iface, string method, PortalValue args, CancellationToken ct, string path = Desktop, string destination = Destination)
         => Task.Run(() => WithCancellation(ct, cancel =>
         {
-            var value = NativeGlib.g_dbus_connection_call_sync(connection, Destination, path, iface, method, args.Handle, 0, 0, 10000, cancel, out var error);
+            var value = NativeGlib.g_dbus_connection_call_sync(connection, destination, path, iface, method, args.Handle, 0, 0, 10000, cancel, out var error);
             NativeGlib.Check(error, method, ct);
             return new PortalValue(value);
         }), ct);
