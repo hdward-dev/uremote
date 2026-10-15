@@ -46,6 +46,29 @@ static class FileTransferChecks
             var completed=await Request(9,Join(TaskId(1),Int(2,1)));
             if(completed.Kind!=6||Number(completed.Body,2)!=1||!SHA256.HashData(File.ReadAllBytes(Path.Combine(root,"fixture.bin"))).SequenceEqual(SHA256.HashData(data)))throw new Exception("Received file integrity wrong.");
             Console.WriteLine("PASS: bounded multi-block upload commits exact file after completion");
+            // Windows starts blocks at 1; our controller starts at 0.
+            // Accept either only for the first block, then enforce continuity.
+            var windowsData = new byte[242028]; new Random(51).NextBytes(windowsData);
+            await Request(1, Join(TaskId(40), Text(2, ":/Default"),
+                Blob(3, Join(Text(1, "windows.bin"), Int(2, (ulong)windowsData.Length)))));
+            await Request(3, Join(TaskId(40), Int(3, (ulong)windowsData.Length)));
+            var badFirst = await Request(4, Join(TaskId(40), Int(2, 2), Blob(3, [99])));
+            if(Number(badFirst.Body,3)==1)throw new Exception("Invalid first block accepted.");
+            var first = await Request(4, Join(TaskId(40), Int(2, 1), Blob(3, windowsData[..204800])));
+            if(Number(first.Body,3)!=1 || Number(first.Body,2)!=1 || Number(first.Body,4)!=204800)
+                throw new Exception("Windows first block rejected.");
+            foreach(var invalidBlock in new ulong[]{0,1,3}) {
+                var bad = await Request(4, Join(TaskId(40), Int(2, invalidBlock), Blob(3, [99])));
+                if(Number(bad.Body,3)==1)throw new Exception("Nonsequential block accepted.");
+            }
+            var second = await Request(4, Join(TaskId(40), Int(2, 2), Blob(3, windowsData[204800..])));
+            if(Number(second.Body,3)!=1)throw new Exception("Windows second block rejected.");
+            var windowsDone = await Request(9, Join(TaskId(40), Int(2, 1)));
+            if(Number(windowsDone.Body,2)!=1 || !File.ReadAllBytes(Path.Combine(root,"windows.bin")).SequenceEqual(windowsData))
+                throw new Exception("Windows upload corrupted.");
+            File.Delete(Path.Combine(root,"windows.bin"));
+            Console.WriteLine("PASS: one-based Windows 200 KiB blocks preserve bytes and reject gaps, repeats and base changes");
+
             var existing=await Request(11,Join(Text(1,"/"),Text(2,"fixture.bin")));
             if(Number(Data(existing.Body,2),2)!=1)throw new Exception("Existing upload target not reported.");
             var aggregate=await Request(9,Join(TaskId(1,ulong.MaxValue),Int(2,1)));

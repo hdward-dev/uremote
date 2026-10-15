@@ -12,12 +12,16 @@ public sealed class ControllerVideoDecoder : IAsyncDisposable
     private readonly Channel<byte[]> encoded = Channel.CreateBounded<byte[]>(32);
     private readonly Task worker;
     private long queuedBytes;
+    private readonly Action<string>? diagnostic;
     public event Action<ControllerFrame>? Frame;
     public event Action? Failed;
-    public ControllerVideoDecoder(string executable)
+    public ControllerVideoDecoder(string executable, Action<string>? diagnostic = null)
     {
+        this.diagnostic = diagnostic;
+        // Keep AVIO buffering for non-seekable H264 input; direct mode can
+        // break probing/parser read-back on some FFmpeg builds.
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-avioflags", "direct", "-fpsprobesize", "0", "-probesize", "32", "-analyzeduration", "0", "-flags", "low_delay", "-threads", "2", "-f", "h264", "-i", "pipe:0", "-an", "-pix_fmt", "rgba", "-fps_mode", "passthrough", "-c:v", "pam", "-threads", "1", "-f", "image2pipe", "pipe:1" }) info.ArgumentList.Add(arg);
+        foreach (var arg in new[] { "-hide_banner", "-loglevel", "error", "-fpsprobesize", "0", "-probesize", "32", "-analyzeduration", "0", "-flags", "low_delay", "-threads", "2", "-f", "h264", "-i", "pipe:0", "-an", "-pix_fmt", "rgba", "-fps_mode", "passthrough", "-c:v", "pam", "-threads", "1", "-f", "image2pipe", "pipe:1" }) info.ArgumentList.Add(arg);
         process = Process.Start(info) ?? throw new IOException("Video decoder could not start.");
         worker = RunAsync();
     }
@@ -45,7 +49,18 @@ public sealed class ControllerVideoDecoder : IAsyncDisposable
     }
     private async Task DrainErrorsAsync()
     {
-        var buffer = new char[2048]; while (await process.StandardError.ReadAsync(buffer.AsMemory(), stop.Token) > 0) { }
+        // Report bounded categories, never raw decoder output or remote payloads.
+        var buffer = new char[2048]; var reported = new HashSet<string>(); int count;
+        while ((count = await process.StandardError.ReadAsync(buffer.AsMemory(), stop.Token)) > 0)
+        {
+            var text = new string(buffer, 0, count);
+            var reason = text.Contains("PPS", StringComparison.OrdinalIgnoreCase) || text.Contains("sps_id", StringComparison.OrdinalIgnoreCase)
+                ? "parameter-sets" : text.Contains("no frame", StringComparison.OrdinalIgnoreCase)
+                ? "no-frame" : "ffmpeg-error";
+            if (reported.Add(reason)) diagnostic?.Invoke("video-decoder-error;reason=" + reason);
+        }
+        await process.WaitForExitAsync(stop.Token);
+        diagnostic?.Invoke("video-decoder-exit;code=" + process.ExitCode);
     }
     private async Task WriteAsync()
     {

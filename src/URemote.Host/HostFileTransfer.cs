@@ -8,7 +8,7 @@ namespace URemote.Host;
 public static class HostTransferPaths
 {
     public static string SharedDirectory => Environment.GetEnvironmentVariable("UREMOTE_FILE_ROOT")
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Download", "uurc");
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "uurc");
 }
 
 // A dedicated shared directory is the only remotely accessible filesystem root.
@@ -29,7 +29,7 @@ public sealed class HostFileTransfer : IAsyncDisposable
     {
         public ulong Id = id; public string Target = target; public List<FileSpec> Files = files;
         public FileStream? Stream; public string? Temporary; public string? Final;
-        public ulong Index, NextBlock; public long Written;
+        public ulong Index, NextBlock; public long Written; public bool HasBlock;
     }
     public HostFileTransfer(Func<string,byte[],bool> send, Action<string> report, CancellationToken ct, string? directory = null)
     { this.send=send;this.report=report;root=Path.GetFullPath(directory ?? HostTransferPaths.SharedDirectory);stop=CancellationTokenSource.CreateLinkedTokenSource(ct); }
@@ -125,7 +125,7 @@ public sealed class HostFileTransfer : IAsyncDisposable
         catch(Exception e) when(e is IOException or UnauthorizedAccessException or FormatException or OverflowException or ArgumentException or KeyNotFoundException)
         {
             var error=e is UnauthorizedAccessException ? 4UL : e is FileNotFoundException or DirectoryNotFoundException ? 9UL : 3UL;
-            report("file-transfer-rejected;kind="+message.Kind+";error="+error+";site="+new System.Diagnostics.StackTrace(e).GetFrame(0)?.GetMethod()?.Name);
+            report("file-transfer-rejected;kind="+message.Kind+";error="+error+";type="+e.GetType().Name+";site="+new System.Diagnostics.StackTrace(e).GetFrame(0)?.GetMethod()?.Name);
             if(e is UnauthorizedAccessException && e.Message.StartsWith("remote-path-",StringComparison.Ordinal))report("file-path-reason="+e.Message);
             if(message.Kind is 1 or 11) {
                 var pathText=String(message.Body,message.Kind==11?1:2);
@@ -187,14 +187,17 @@ public sealed class HostFileTransfer : IAsyncDisposable
         // Never silently replace a pre-existing local file.
         if(File.Exists(final)) { var stem=Path.GetFileNameWithoutExtension(final);var extension=Path.GetExtension(final);var parent=Path.GetDirectoryName(final)!;var suffix=1;do{final=Path.Combine(parent,stem+" ("+suffix+++ ")"+extension);}while(File.Exists(final)); }
         task.Temporary=Path.Combine(Path.GetDirectoryName(final)!,".uremote-"+Guid.NewGuid().ToString("N")+".part"); task.Final=final;
-        task.Stream=new FileStream(task.Temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None,65536,true); task.Index=index;task.Written=0;task.NextBlock=0;
+        task.Stream=new FileStream(task.Temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None,65536,true); task.Index=index;task.Written=0;task.NextBlock=0;task.HasBlock=false;
         Reply(request,3,Join(Id(task.Id,index),Int(3,1)));await Task.CompletedTask;
     }
     private async Task BlockAsync(TransferMessage request)
     {
         var task=receiving[TaskId(request.Body)];var block=Number(request.Body,2);var data=Data(request.Body,3);
-        if(task.Stream is null||Index(request.Body)!=task.Index||block!=task.NextBlock||data.Length>262144||task.Written+data.Length>task.Files[checked((int)task.Index)-1].Size)throw new FormatException("Invalid block.");
-        await task.Stream.WriteAsync(data,stop.Token);task.Written+=data.Length;task.NextBlock++;
+        var validBlock = task.HasBlock ? block == task.NextBlock : block is 0 or 1;
+        if(!validBlock || Index(request.Body)!=task.Index)
+            report($"file-block-shape;index={Index(request.Body)};expected-index={task.Index};block={block};expected-block={task.NextBlock};bytes={data.Length};written={task.Written};open={task.Stream is not null}");
+        if(task.Stream is null||Index(request.Body)!=task.Index||!validBlock||data.Length>262144||task.Written+data.Length>task.Files[checked((int)task.Index)-1].Size)throw new FormatException("Invalid block.");
+        await task.Stream.WriteAsync(data,stop.Token);task.Written+=data.Length;task.NextBlock=block+1;task.HasBlock=true;
         Reply(request,4,Join(Id(task.Id,task.Index),Int(2,block),Int(3,1),Int(4,(ulong)data.Length)));
         if(task.Written==task.Files[checked((int)task.Index)-1].Size || task.NextBlock%32==0)report($"file-transfer-progress;bytes={task.Written};total={task.Files[checked((int)task.Index)-1].Size}");
     }
