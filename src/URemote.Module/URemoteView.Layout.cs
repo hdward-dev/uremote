@@ -40,8 +40,14 @@ public sealed partial class URemoteView
     private readonly TextBox search = new() { PlaceholderText = "搜索设备名称、平台或编号", MinWidth = 160 };
     private readonly ComboBox filter = new() { ItemsSource = new[] { "全部设备", "在线设备", "我的收藏", "电脑", "移动设备" }, SelectedIndex = 0, Width = 130 };
     private readonly Button refresh = new() { Content = "刷新设备" };
-    private readonly Grid deviceRows = new() { ColumnSpacing = 16, RowSpacing = 16 };
-    private int deviceColumns = 2;
+    private readonly DeviceCardWrap deviceRows = new()
+    {
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        MinItemWidth = 380,
+        MaxItemWidth = 640,
+        ItemSpacing = 16,
+        LineSpacing = 16
+    };
     private bool listView;
     private int deviceTab;
     private readonly StackPanel deviceDetail = new() { Spacing = 10, IsVisible = false };
@@ -70,11 +76,6 @@ public sealed partial class URemoteView
         var border = new Border { Child = child, Padding = new Thickness(padding), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1) };
         ApplyTheme(border, Border.BackgroundProperty, "AppSurfaceBrush"); ApplyTheme(border, Border.BorderBrushProperty, "AppBorderBrush"); return border;
     }
-    private static PathIcon DeviceIcon(bool mobile = false) => new()
-    {
-        Width = 22, Height = 22,
-        Data = Geometry.Parse(mobile ? "M7,2 H17 V22 H7 Z M9,4 V18 H15 V4 Z M11,20 H13 V21 H11 Z" : "M2,3 H22 V17 H13 V20 H18 V22 H6 V20 H11 V17 H2 Z M4,5 V15 H20 V5 Z")
-    };
     private void BuildInterface(string dataDirectory)
     {
         Resources.ThemeDictionaries[ThemeVariant.Light] = new ResourceDictionary {
@@ -193,8 +194,6 @@ public sealed partial class URemoteView
                 hostPanel.Margin = new Thickness(14, 12);
                 hostBorder.IsVisible = true;
             }
-            var columns = e.NewSize.Width >= 1150 ? 2 : 1;
-            if (columns != deviceColumns) { deviceColumns = columns; RenderDevices(); }
         };
         ShowPage(0); RenderDevices();
         try { UpdateAccountDisplay(DesktopHostSession.ReadIdentity(identity.Text ?? "")); }
@@ -284,11 +283,11 @@ public sealed partial class URemoteView
     private void RenderDevices()
     {
         deviceRows.Children.Clear();
-        deviceRows.ColumnDefinitions = new("*"); deviceRows.RowDefinitions = new("Auto");
+        deviceRows.SingleColumn = listView;
         var query = search.Text?.Trim() ?? "";
         var matches = devices.Where(d => (query.Length == 0 || (d.Name + " " + d.PlatformName + " " + d.Id).Contains(query, StringComparison.OrdinalIgnoreCase))
             && (deviceTab == 0 || favorites.Contains(d.Id)) && (filter.SelectedIndex switch { 1 => d.Online, 2 => favorites.Contains(d.Id), 3 => d.Category == "desktop", 4 => d.Category == "mobile", _ => true }))
-            .OrderByDescending(d => d.IsCurrent).ThenByDescending(d => d.Online).ThenBy(d => d.Name, StringComparer.CurrentCulture).ToArray();
+            .OrderByDescending(d => d.Online).ThenByDescending(d => d.IsCurrent).ThenBy(d => d.Name, StringComparer.CurrentCulture).ToArray();
         catalogCount.Text = devices.Count > 0 ? $"我的设备  {matches.Length}" : "我的设备";
         if (matches.Length == 0)
         {
@@ -296,14 +295,7 @@ public sealed partial class URemoteView
                 Text(devices.Count == 0 ? "还没有加载设备" : "没有符合条件的设备", 18),
                 Text(devices.Count == 0 ? "登录后点击刷新，即可查看同一 UU 账号下的电脑和移动设备。" : "试试其他关键词，或将筛选切换为“全部设备”。", 13, true) } })); return;
         }
-        var columns = listView ? 1 : deviceColumns;
-        deviceRows.ColumnDefinitions = new ColumnDefinitions(columns == 2 ? "*,*" : "*");
-        deviceRows.RowDefinitions = new RowDefinitions(string.Join(",", Enumerable.Repeat("Auto", (matches.Length + columns - 1) / columns)));
-        for (var i = 0; i < matches.Length; i++)
-        {
-            var card = BuildPreviewCard(matches[i]);
-            Grid.SetColumn(card, i % columns); Grid.SetRow(card, i / columns); deviceRows.Children.Add(card);
-        }
+        foreach (var device in matches) deviceRows.Children.Add(BuildPreviewCard(device));
     }
     private void OpenRemote(UuDevice device)
     {

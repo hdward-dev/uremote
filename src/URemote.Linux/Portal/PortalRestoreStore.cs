@@ -17,7 +17,19 @@ internal sealed class PortalRestoreStore
         var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(desktop)))[..16];
         path = Path.Combine(directory, (input ? "control-" : "view-") + scope + ".token");
     }
-    internal string? Take()
+    // Read without deleting. A canceled Start can present the same grant again.
+    internal string? Peek() => Read(delete: false);
+    // Explicit single use. Portal denial also discards; transport failure does not.
+    internal string? Take() => Read(delete: true);
+    internal void Discard()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        try { if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0) File.Delete(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { Console.WriteLine("portal-restore-store-unavailable"); }
+    }
+    internal static bool Accepts(string? token) => Valid(token);
+    private string? Read(bool delete)
     {
         if (!OperatingSystem.IsLinux()) return null;
         try
@@ -29,8 +41,10 @@ internal sealed class PortalRestoreStore
                 UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0) { File.Delete(path); return null; }
             if (new FileInfo(path).Length > 8192) { File.Delete(path); return null; }
             var token = File.ReadAllText(path);
-            File.Delete(path); // A failed/canceled restore must not reuse a consumed token.
-            return Valid(token) ? token : null;
+            if (!Valid(token)) { File.Delete(path); return null; }
+            // Delete only after a real consume. Peek leaves the file for a retry.
+            if (delete) File.Delete(path);
+            return token;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         { Console.WriteLine("portal-restore-store-unavailable"); return null; }

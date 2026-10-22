@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using SIPSorcery.Net;
@@ -8,7 +9,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null, Func<string, bool>? recyclePortal = null)
     {
         report ??= Console.WriteLine;
         if (OperatingSystem.IsMacOS() && enableAudio) { enableAudio = false; report("audio-unavailable"); }
@@ -145,6 +146,12 @@ public static class HostPreview
                 switch (update.Action)
                 {
                     case HostSignalAction.Requested:
+                        var quiet = DesktopBackend.PipelineQuietRemaining;
+                        if (quiet > TimeSpan.Zero)
+                        {
+                            report($"peer-pipeline-quiet;milliseconds={(int)quiet.TotalMilliseconds}");
+                            await Task.Delay(quiet, token);
+                        }
                         var assistanceToken = update.Peer!.Options.ControlConnectType == 2
                             ? assistancePermission?.Invoke() ?? CancellationToken.None : CancellationToken.None;
                         if(assistanceToken.IsCancellationRequested)
@@ -222,7 +229,7 @@ public static class HostPreview
                             await signal.SendEventAsync("ice_finished_log", new JsonObject
                             { ["app_control_id"] = id.AppControlId, ["ice_id"] = id.IceId }, ct: peerToken);
                             report("ice-completion-notified");
-                        }, report, profiles);
+                        }, report, profiles, recyclePortal);
                         input = terminal ? HostTerminalPeer.RunAsync(media, terminalManager, enableInput && !OperatingSystem.IsMacOS(), peerStop.Token, report)
                             : HostInput.RunAsync(media, outputs, peerStop.Token, report, enableInput && !fileOnly, enableClipboard && !fileOnly, profiles, inputApplied: () =>
                             {
@@ -238,7 +245,22 @@ public static class HostPreview
                         void PeerFailed(Task task)
                         {
                             var error = task.Exception?.GetBaseException();
-                            report("peer-pipeline-failure;type=" + error?.GetType().Name + ";site=" + error?.TargetSite?.Name);
+                            var site = Site(error);
+                            // A planned portal recycle cancels this peer on purpose. InvalidOperationException
+                            // from a stale async enumerator used to reconnect in a tight loop; reset once instead.
+                            var reset = error is InvalidOperationException || (DesktopBackend.PipelineResetActive && error is OperationCanceledException or DesktopSessionClosedException or IOException or ObjectDisposedException);
+                            if (reset)
+                            {
+                                report("peer-pipeline-reset;type=" + error?.GetType().Name + ";site=" + site);
+                                // Capture health requests the portal recycle. This only breaks the reconnect storm.
+                                if (error is InvalidOperationException) DesktopBackend.ArmPipelineQuiet(TimeSpan.FromSeconds(2));
+                                try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
+                                activeMedia.Dispose();
+                                report("peer-pipeline-ended; publisher-kept-online");
+                                report("viewer-released");
+                                return;
+                            }
+                            report("peer-pipeline-failure;type=" + error?.GetType().Name + ";site=" + site);
                             try { mediaLifetime.Cancel(); } catch (ObjectDisposedException) { }
                             activeMedia.Dispose();
                             report("peer-pipeline-ended; publisher-kept-online");
@@ -298,7 +320,7 @@ public static class HostPreview
         }
     }
 
-    private static async Task StreamAsync(HostMediaPeer media, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput, Func<Task> onConnected, Action<string> report, HostVideoSettings profiles)
+    private static async Task StreamAsync(HostMediaPeer media, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput, Func<Task> onConnected, Action<string> report, HostVideoSettings profiles, Func<string, bool>? recyclePortal)
     {
         using var connectionDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         connectionDeadline.CancelAfter(TimeSpan.FromSeconds(45));
@@ -318,12 +340,12 @@ public static class HostPreview
             {
                 var selected = profiles.SelectedScreen;
                 report("video-source-selected;screen=" + selected + ";track=0");
-                await StreamOutputAsync(media, ffmpeg, outputs[selected], selected, report, ct, profiles, 0);
+                await StreamOutputAsync(media, ffmpeg, outputs[selected], selected, report, ct, profiles, recyclePortal, 0);
             }
             return;
         }
         using var streamsStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var tasks = outputs.Select((output, index) => StreamOutputAsync(media, ffmpeg, output, index, report, streamsStop.Token, profiles)).ToList();
+        var tasks = outputs.Select((output, index) => StreamOutputAsync(media, ffmpeg, output, index, report, streamsStop.Token, profiles, recyclePortal)).ToList();
         await Task.WhenAny(tasks);
         streamsStop.Cancel();
         await Task.WhenAll(tasks);
@@ -343,7 +365,7 @@ public static class HostPreview
     }
 
     private static async Task StreamOutputAsync(HostMediaPeer media, string ffmpeg, uint output, int index,
-        Action<string> report, CancellationToken ct, HostVideoSettings profiles, int? videoTrack = null)
+        Action<string> report, CancellationToken ct, HostVideoSettings profiles, Func<string, bool>? recyclePortal, int? videoTrack = null)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -353,9 +375,12 @@ public static class HostPreview
         await using var encoder = new StreamingH264Encoder(ffmpeg, (int)first.Width, (int)first.Height, first.YInverted, first.ShmFormat, profile.Fps, profile.Width, profile.Height, profile.Bitrate, profile.Crf);
         report($"video-encoder-config;screen={index + 1};width={profile.Width};height={profile.Height};fps={profile.Fps};bitrate={profile.Bitrate};crf={profile.Crf}");
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var darkness = new StrongBox<int>(-1);
         var producer = Task.Run(async () =>
         {
             var frame = first;
+            var blackFrames = 0;
+            var blackStart = 0L;
             try
             {
                 var cadence = System.Diagnostics.Stopwatch.StartNew();
@@ -367,6 +392,20 @@ public static class HostPreview
                     {
                         if (frame.Width != first.Width || frame.Height != first.Height || frame.ShmFormat != first.ShmFormat || frame.YInverted != first.YInverted)
                             throw new IOException("Display format changed; reconnect required.");
+                        var dark = PortalCaptureHealth.NearBlack(frame.Pixels);
+                        Volatile.Write(ref darkness.Value, dark ? 1 : 0);
+                        if (dark)
+                        {
+                            if (blackFrames == 0) blackStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                            blackFrames++;
+                            if (PortalCaptureHealth.BlackStreak(blackFrames, System.Diagnostics.Stopwatch.GetElapsedTime(blackStart)))
+                            {
+                                blackFrames = 0;
+                                report($"portal-capture-stale;reason=low-luma;screen={index + 1}");
+                                if (recyclePortal?.Invoke("low-luma") == true) break;
+                            }
+                        }
+                        else blackFrames = 0;
                         await encoder.WriteAsync(frame.Pixels, (int)frame.Stride, stop.Token);
                     }
                     finally { Array.Clear(frame.Pixels); }
@@ -386,6 +425,10 @@ public static class HostPreview
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var count = 0; long sentBytes = 0;
+            var windowBytes = 0L; var windowFrames = 0; var lowWindows = 0;
+            var windowStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
             await foreach (var encoded in encoder.ReadAsync(stop.Token))
             {
                 try
@@ -394,11 +437,36 @@ public static class HostPreview
                     var rtpDuration = (uint)(90000 / profile.Fps);
                     await media.SendH264PacedAsync(encoded, rtpDuration, videoTrack ?? index, profile.Bitrate, stop.Token);
                     sentBytes += encoded.Length;
+                    windowBytes += encoded.Length;
                     count++;
+                    windowFrames++;
                     if (count == 1 || count % 150 == 0)
                         report($"video-frames-sent={count};screen={index + 1};fps={count / watch.Elapsed.TotalSeconds:F1};encoded-mbps={sentBytes * 8 / watch.Elapsed.TotalSeconds / 1000000:F2}");
+                    var windowElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(windowStart);
+                    if (PortalCaptureHealth.WindowIsStale(windowFrames, windowElapsed, windowBytes)) lowWindows++;
+                    else if (windowFrames >= 120 && windowElapsed >= TimeSpan.FromSeconds(2)) lowWindows = 0;
+                    if (windowFrames >= 120 && windowElapsed >= TimeSpan.FromSeconds(2))
+                    {
+                        if (PortalCaptureHealth.StreakTriggers(lowWindows) && Volatile.Read(ref darkness.Value) != 0)
+                        {
+                            var fps = windowFrames / windowElapsed.TotalSeconds;
+                            var mbps = windowBytes * 8d / windowElapsed.TotalSeconds / 1_000_000d;
+                            report($"portal-capture-stale;reason=low-bitrate;screen={index + 1};fps={fps:F1};encoded-mbps={mbps:F2}");
+                            lowWindows = 0;
+                            if (recyclePortal?.Invoke("low-bitrate") == true) break;
+                        }
+                        windowBytes = 0; windowFrames = 0; windowStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                    }
                 }
                 finally { Array.Clear(encoded); }
+            }
+            }
+            catch (InvalidOperationException)
+            {
+                report($"peer-video-transport-reset;screen={index + 1}");
+                DesktopBackend.ArmPipelineQuiet(TimeSpan.FromSeconds(2));
+                if (Volatile.Read(ref darkness.Value) != 0 || lowWindows > 0)
+                    recyclePortal?.Invoke("low-bitrate");
             }
         });
         try
@@ -432,6 +500,15 @@ public static class HostPreview
             }
         }
         return result;
+    }
+
+    private static string Site(Exception? error)
+    {
+        var name = error?.TargetSite?.Name;
+        if (string.IsNullOrEmpty(name) || name.Length > 64) return "unknown";
+        foreach (var character in name)
+            if (!char.IsLetterOrDigit(character) && character is not ('_' or '.')) return "unknown";
+        return name;
     }
 
     private static async Task<int[]> ReadFrameRateLimitsAsync(IReadOnlyList<uint> outputs, Action<string> report, CancellationToken ct)

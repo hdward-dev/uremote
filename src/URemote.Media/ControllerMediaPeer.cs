@@ -167,7 +167,12 @@ public sealed class ControllerMediaPeer : IDisposable
             try { control!.send(json); return true; } catch { return false; }
         }
     }
-    public void SelectDisplay(int display) => Send(ControllerProtocol.Capture(Next(), display));
+    public void SelectDisplay(int display, int quality = 3) => Send(ControllerProtocol.Capture(Next(), display, Math.Clamp(quality, 1, 5)));
+    public void SetQuality(int quality)
+    {
+        if (quality is < 1 or > 5) return;
+        Send(ControllerProtocol.Quality(Next(), quality));
+    }
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;

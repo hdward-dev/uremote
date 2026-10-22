@@ -1,0 +1,101 @@
+<Border xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:URemote.Module"
+        x:Class="URemote.Module.DeviceCard"
+        x:DataType="local:DeviceCardModel"
+        x:CompileBindings="True"
+        Classes="ad-card device-card"
+        Classes.selected="{Binding IsSelected}"
+        Background="{DynamicResource AppSurfaceBrush}"
+        BorderBrush="{DynamicResource AppBorderBrush}"
+        BorderThickness="1"
+        CornerRadius="12"
+        Padding="4"
+        ClipToBounds="True">
+  <Border.Styles>
+    <Style Selector="Border.device-card">
+      <Setter Property="Background" Value="{DynamicResource AppSurfaceBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="12"/>
+    </Style>
+    <Style Selector="Border.device-card.selected">
+      <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}"/>
+    </Style>
+  </Border.Styles>
+  <Grid RowDefinitions="Auto,Auto,Auto">
+    <Button Classes="ad-flat" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+            Background="Transparent" BorderThickness="0" IsHitTestVisible="{Binding CanControl}"
+            ToolTip.Tip="{Binding ConnectTip}" AutomationProperties.Name="{Binding ConnectName}" Click="Remote_Click">
+      <Grid x:Name="preview" Height="{Binding PreviewHeight}" ClipToBounds="True" Background="{DynamicResource AppSubtleBrush}" SizeChanged="Preview_SizeChanged">
+        <Image Source="{Binding Wallpaper}" Stretch="UniformToFill" Opacity="{Binding WallpaperOpacity}" IsVisible="{Binding HasWallpaper}"/>
+        <StackPanel Spacing="10" VerticalAlignment="Center" HorizontalAlignment="Center" IsVisible="{Binding ShowPlaceholder}">
+          <Path Width="22" Height="22" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppMutedBrush}"
+                IsVisible="{Binding IsDesktop}" Data="M2,3 H22 V17 H13 V20 H18 V22 H6 V20 H11 V17 H2 Z M4,5 V15 H20 V5 Z"/>
+          <Path Width="22" Height="22" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppMutedBrush}"
+                IsVisible="{Binding IsMobile}" Data="M7,2 H17 V22 H7 Z M9,4 V18 H15 V4 Z M11,20 H13 V21 H11 Z"/>
+          <TextBlock Text="暂无桌面预览" FontSize="12" Classes="ad-muted"/>
+        </StackPanel>
+        <Border Classes="ad-scrim" Margin="10" HorizontalAlignment="Left" VerticalAlignment="Top" IsVisible="{Binding ShowBadge}">
+          <TextBlock Text="{Binding BadgeText}" Classes="ad-on-scrim"/>
+        </Border>
+      </Grid>
+    </Button>
+    <StackPanel Grid.Row="1" Spacing="7" Margin="12">
+      <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource AppStrongTextBrush}"/>
+      <StackPanel Orientation="Horizontal" Spacing="12">
+        <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="{DynamicResource AppPositiveBrush}" IsVisible="{Binding Online}"/>
+        <TextBlock Text="{Binding StatusText}" FontSize="12" Classes="ad-muted" IsVisible="{Binding Offline}"/>
+        <TextBlock Text="{Binding PlatformName}" FontSize="12" Classes="ad-muted"/>
+      </StackPanel>
+    </StackPanel>
+    <Border Grid.Row="2" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0">
+      <Grid x:Name="actions" ColumnDefinitions="*,Auto,*,Auto,*,Auto,*,Auto,Auto" ColumnSpacing="4" Margin="8,5" SizeChanged="Actions_SizeChanged">
+        <Button Classes="ad-flat" Padding="4,7" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsEnabled="{Binding CanControl}" Opacity="{Binding TransferOpacity}"
+                ToolTip.Tip="{Binding TransferTip}" AutomationProperties.Name="{Binding TransferName}" Click="Files_Click">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppStrongTextBrush}" Data="M2,5 H9 L11,8 H22 V21 H2 Z M5,12 H19 M15,9 L19,12 L15,15"/>
+            <TextBlock Text="文件传输" FontSize="12" IsVisible="{Binding ShowLabels}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="1" Width="1" Height="16" VerticalAlignment="Center" Background="{DynamicResource AppBorderBrush}"/>
+        <Button Grid.Column="2" Classes="ad-flat" Padding="4,7" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsEnabled="{Binding CanControl}" Opacity="{Binding TransferOpacity}"
+                ToolTip.Tip="{Binding TerminalTip}" AutomationProperties.Name="{Binding TerminalName}" Click="Terminal_Click">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppStrongTextBrush}" Data="M2,4 H22 V20 H2 Z M6,9 L10,12 L6,15 M12,15 H18"/>
+            <TextBlock Text="终端" FontSize="12" IsVisible="{Binding ShowLabels}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="3" Width="1" Height="16" VerticalAlignment="Center" Background="{DynamicResource AppBorderBrush}"/>
+        <Button Grid.Column="4" Classes="ad-flat" Padding="4,7" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsEnabled="False" Opacity="0.35" ToolTip.Tip="端口映射尚未实现" AutomationProperties.Name="{Binding PortName}">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppStrongTextBrush}" Data="M3,3 H9 V21 H3 Z M15,3 H21 V21 H15 Z M9,8 H15 M9,16 H15"/>
+            <TextBlock Text="端口映射" FontSize="12" IsVisible="{Binding ShowLabels}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="5" Width="1" Height="16" VerticalAlignment="Center" Background="{DynamicResource AppBorderBrush}"/>
+        <Button Grid.Column="6" Classes="ad-flat" Padding="4,7" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                IsEnabled="False" Opacity="0.35" ToolTip.Tip="远程开机尚未实现" AutomationProperties.Name="{Binding WakeName}">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Path Width="15" Height="15" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppStrongTextBrush}" Data="M11,2 H13 V12 H11 Z M6,5 L7,7 A7,7 0 1 0 17,7 L18,5 A9,9 0 1 1 6,5"/>
+            <TextBlock Text="远程开机" FontSize="12" IsVisible="{Binding ShowLabels}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          </StackPanel>
+        </Button>
+        <Border Grid.Column="7" Width="1" Height="16" VerticalAlignment="Center" Background="{DynamicResource AppBorderBrush}"/>
+        <Button Grid.Column="8" Classes="ad-flat" Content="▦" Padding="5,7" Background="Transparent" ToolTip.Tip="更多操作">
+          <Button.Flyout>
+            <Flyout>
+              <StackPanel Spacing="6">
+                <Button Content="{Binding FavoriteLabel}" HorizontalAlignment="Stretch" Click="Favorite_Click"/>
+                <Button Content="设备详情" HorizontalAlignment="Stretch" Click="Details_Click"/>
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+      </Grid>
+    </Border>
+  </Grid>
+</Border>

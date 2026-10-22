@@ -19,6 +19,7 @@ public sealed class RemoteDesktopWindow : Window
     private readonly CancellationTokenSource stop = new();
     private readonly Image video = new() { Stretch = Stretch.Uniform, Focusable = true };
     private readonly TextBlock status = new() { Text = "正在连接…", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+    private readonly ComboBox quality = new() { MinWidth = 108 };
     private readonly ComboBox display = new() { MinWidth = 130, PlaceholderText = "显示屏", IsEnabled = false };
     private readonly HashSet<int> keys = [];
     private readonly HashSet<int> buttons = [];
@@ -42,8 +43,14 @@ public sealed class RemoteDesktopWindow : Window
         Background = Brushes.Black;
         var disconnect = new Button { Content = "断开连接" }; disconnect.Click += (_, _) => Close();
         var full = new Button { Content = "全屏" }; full.Click += (_, _) => { WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen; video.Focus(); };
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"), ColumnSpacing = 12, Margin = new Thickness(16, 10) };
-        bar.Children.Add(status); Grid.SetColumn(display, 1); bar.Children.Add(display); Grid.SetColumn(full, 2); bar.Children.Add(full); Grid.SetColumn(disconnect, 3); bar.Children.Add(disconnect);
+        quality.ItemsSource = new[] { "流畅", "高清", "超清", "原画", "自动" };
+        quality.SelectedIndex = 4;
+        ToolTip.SetTip(quality, "画质调节");
+        Avalonia.Automation.AutomationProperties.SetName(quality, "画质调节");
+        quality.SelectionChanged += (_, _) => ApplyQuality();
+        ApplyQuality();
+        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"), ColumnSpacing = 12, Margin = new Thickness(16, 10) };
+        bar.Children.Add(status); Grid.SetColumn(quality, 1); bar.Children.Add(quality); Grid.SetColumn(display, 2); bar.Children.Add(display); Grid.SetColumn(full, 3); bar.Children.Add(full); Grid.SetColumn(disconnect, 4); bar.Children.Add(disconnect);
         var body = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") }; body.Children.Add(bar);
         Grid.SetRow(video, 1); body.Children.Add(video);
         var hint = new TextBlock { Text = "点击画面控制 · Ctrl + Alt + Esc 释放键鼠 · 关闭窗口断开连接", Foreground = Brushes.LightGray, Margin = new Thickness(16, 8), FontSize = 12 };
@@ -58,7 +65,7 @@ public sealed class RemoteDesktopWindow : Window
         controller.Status += value => Dispatcher.UIThread.Post(() => { if (!closed) status.Text = value switch {
             "joining" => "正在请求连接…", "signaling" => "正在连接设备…", "negotiating" or "answer-received" => "正在建立画面通道…",
             "ice-checking" => "正在尝试直连或中转…", "ice-failed" or "peer-failed" => "网络通道建立失败，请检查双方网络后重试。",
-            "control-ready" or "peer-connected" => "已连接，等待画面…", "peer-disconnected" => "连接中断…", "closed" => "连接已结束", _ => status.Text }; });
+            "control-ready" or "peer-connected" => Connected(), "peer-disconnected" => "连接中断…", "closed" => "连接已结束", _ => status.Text }; });
         controller.Displays += ids => Dispatcher.UIThread.Post(() => {
             if (closed) return; displayIds = ids; display.ItemsSource = ids.Select(x => "显示屏 " + (x + 1)).ToArray();
             display.IsEnabled = ids.Length > 1; display.SelectedIndex = Math.Max(0, Array.IndexOf(ids, activeDisplay));
@@ -85,6 +92,17 @@ public sealed class RemoteDesktopWindow : Window
         video.LostFocus += (_, _) => ReleaseInputs(); Deactivated += (_, _) => ReleaseInputs();
         Opened += (_, _) => { paintTimer.Start(); Completion = RunAsync(state, device.Id, ffmpeg, assistance); };
         Closed += (_, _) => { closed = true; ReleaseInputs(); stop.Cancel(); paintTimer.Stop(); video.Source = null; bitmap?.Dispose(); lock (frameGate) latest.Clear(); };
+    }
+    // Combo order is HostVideoSettings 1–5: fluent, HD, ultra, original, automatic.
+    private void ApplyQuality()
+    {
+        var level = quality.SelectedIndex + 1;
+        if (level is >= 1 and <= 5) controller.SetQuality(level);
+    }
+    private string Connected()
+    {
+        ApplyQuality();
+        return "已连接，等待画面…";
     }
     private bool Send(object value)
     {

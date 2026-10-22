@@ -37,13 +37,18 @@ AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().AfterSetup(build
         if (!args.Contains("--empty"))
         {
             type.GetField("devices", flags)!.SetValue(view, new URemote.Core.UuDevice[] {
-                new("fixture-linux", "aster-nixos", "desktop", 4, "CONNECTED", true, true, "4.41.0", true),
+                // Offline current first in source order must not float above other online devices.
+                new("fixture-mac", "MacBook Pro", "desktop", 4, "DISCONNECTED", true, true, "4.41.0", true),
                 new("fixture-win", "工作室 Windows", "desktop", 1, "CONNECTED", true, true, "4.41.0", false),
-                new("fixture-mac", "MacBook Pro", "desktop", 4, "DISCONNECTED", true, true, "4.41.0", false),
+                new("fixture-linux", "aster-nixos", "desktop", 4, "CONNECTED", true, true, "4.41.0", false),
                 new("fixture-ios", "iPhone", "mobile", 3, "DISCONNECTED", false, false, "4.41.0", false) });
             type.GetMethod("RenderDevices", flags)!.Invoke(view, null);
             var filter = (Avalonia.Controls.ComboBox)type.GetField("filter", flags)!.GetValue(view)!;
-            var rows = (Avalonia.Controls.Grid)type.GetField("deviceRows", flags)!.GetValue(view)!;
+            var rows = (URemote.Module.DeviceCardWrap)type.GetField("deviceRows", flags)!.GetValue(view)!;
+            var onlineOrder = rows.Children.OfType<URemote.Module.DeviceCard>()
+                .Select(card => ((URemote.Module.DeviceCardModel)card.DataContext!).Online).ToArray();
+            if (onlineOrder is not [true, true, false, false])
+                throw new Exception("Online devices must sort before offline; got " + string.Join(",", onlineOrder));
             filter.SelectedIndex = 1;
             if (rows.Children.Count != 2) throw new Exception("Online filter failed.");
             filter.SelectedIndex = 0;
@@ -54,7 +59,7 @@ AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().AfterSetup(build
             search.Text = "";
             type.GetMethod("RenderDevices", flags)!.Invoke(view, null);
             ((Avalonia.Controls.TextBlock)type.GetField("catalogHint", flags)!.GetValue(view)!).Text = "演示设备 · 4 台设备 · 2 台在线";
-            Console.WriteLine("PASS: native device list online filter and name search");
+            Console.WriteLine("PASS: native device list online-first sort, online filter and name search");
         }
         var selected = args.Contains("--local") ? 5 : args.Contains("--settings") ? 2 : args.Contains("--host") ? 1 : 0;
         if (args.Contains("--local"))

@@ -22,6 +22,16 @@ internal static class PersistenceChecks
             store.Save("rejected-token"); server.Deny = true;
             try { using var denied = await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, default, store); check(false,"denied restore"); }
             catch (InvalidOperationException) { check(store.Take() is null, "denied restore discards stale token without repeated consent prompts"); }
+            store.Save("kept-token");
+            check(store.Peek() == "kept-token" && store.Peek() == "kept-token", "peek reads a restore token without consuming it");
+            server.Deny = false; server.Hold = true;
+            try
+            {
+                using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+                try { using var pending = await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, cancel.Token, store); check(false, "canceled start"); }
+                catch (OperationCanceledException) { check(store.Peek() == "kept-token", "canceled start keeps the restore token for the next attempt"); }
+            }
+            finally { server.Hold = false; check(store.Take() == "kept-token", "kept token is still consumed only by an explicit take"); }
             server.Deny = false; server.ReceivedRestoreToken = null; server.NextRestoreToken = "fresh-token";
             using (await PortalAuthorization.StartAsync(bus, MockPortal.Session, true, default, store)) { }
             check(server.ReceivedRestoreToken is null && store.Take() == "fresh-token", "retry after invalidation uses fresh consent and saves replacement");
@@ -43,7 +53,7 @@ internal static class PersistenceChecks
         }
         finally
         {
-            server.Deny = false; server.Version = 4; server.NextRestoreToken = null;
+            server.Deny = false; server.Hold = false; server.Version = 4; server.NextRestoreToken = null;
             Directory.Delete(directory, true);
         }
     }

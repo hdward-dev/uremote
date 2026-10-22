@@ -73,7 +73,11 @@ internal sealed class PortalVideoStream : IAsyncDisposable
     private readonly SemaphoreSlim gate = new(1);
     private nint pipeline, sink, bus;
     private CapturedScreen? cached;
+    private long cachedAt;
     private readonly uint output;
+    // A stuck pull must not keep re-encoding an ancient black frame at the full capture rate.
+    internal static readonly TimeSpan CachedFrameLifetime = TimeSpan.FromMilliseconds(250);
+    internal static bool ReuseCachedFrame(TimeSpan age) => age >= TimeSpan.Zero && age <= CachedFrameLifetime;
     private bool disposed;
     internal PortalVideoStream(uint output, int fd) : this(output,
         $"pipewiresrc fd={fd} path={output} do-timestamp=true ! videoconvert ! video/x-raw,format=BGRA ! appsink name=frames max-buffers=1 drop=true sync=false") { }
@@ -113,10 +117,11 @@ internal sealed class PortalVideoStream : IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             var error = NativeGst.gst_bus_pop_filtered(bus, 2); // GST_MESSAGE_ERROR
             if (error != 0) { NativeGst.gst_mini_object_unref(error); throw new IOException("PipeWire 屏幕管线已失败。"); }
-            sample = NativeGst.gst_app_sink_try_pull_sample(sink, cached is null ? 50_000_000ul : 0ul);
+            var fresh = cached is not null && ReuseCachedFrame(Stopwatch.GetElapsedTime(cachedAt));
+            sample = NativeGst.gst_app_sink_try_pull_sample(sink, fresh ? 0ul : 50_000_000ul);
             if (sample != 0) break;
             if (NativeGst.gst_app_sink_is_eos(sink) != 0) throw new DesktopSessionClosedException("屏幕共享已结束。");
-            if (cached is not null) return cached with { Pixels = (byte[])cached.Pixels.Clone() };
+            if (fresh && cached is not null) return cached with { Pixels = (byte[])cached.Pixels.Clone() };
             if (deadline.Elapsed > TimeSpan.FromSeconds(10)) throw new TimeoutException("等待首帧超时。");
         } while (true);
         try
@@ -164,6 +169,7 @@ internal sealed class PortalVideoStream : IAsyncDisposable
                 }
                 if (cached is not null) Array.Clear(cached.Pixels);
                 cached = new(output, (uint)info.Width, (uint)info.Height, (uint)info.Width * 4, 1, false, pixels);
+                cachedAt = Stopwatch.GetTimestamp();
                 return cached with { Pixels = (byte[])pixels.Clone() };
             }
             catch { Array.Clear(pixels); throw; }

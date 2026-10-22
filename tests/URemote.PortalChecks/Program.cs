@@ -32,6 +32,29 @@ using (var read = dict.Get("types"))
     Check(dict.Get("missing") is null, "missing options remain absent");
     try { _ = text.UInt(); Check(false, "type mismatch"); } catch (FormatException) { Check(true, "variant type mismatch is rejected before native access"); }
 }
+Check(PortalCaptureHealth.IsLowBitrate(57, 0.05) && !PortalCaptureHealth.IsLowBitrate(57, 2.4) && !PortalCaptureHealth.IsLowBitrate(8, 0.05),
+    "stuck capture is high frame rate with tiny encoded bitrate");
+Check(PortalCaptureHealth.WindowIsStale(150, TimeSpan.FromSeconds(2.6), 30_000) && !PortalCaptureHealth.WindowIsStale(150, TimeSpan.FromSeconds(2.6), 975_000),
+    "a multi-second near-black window is stale and a healthy window is not");
+Check(!PortalCaptureHealth.WindowIsStale(30, TimeSpan.FromSeconds(3), 1_000) && PortalCaptureHealth.StreakTriggers(2) && !PortalCaptureHealth.StreakTriggers(1),
+    "bitrate stale detection waits for two full windows");
+Check(PortalCaptureHealth.BlackStreak(30, TimeSpan.FromSeconds(4)) && !PortalCaptureHealth.BlackStreak(10, TimeSpan.FromSeconds(4)),
+    "near-black content must persist for several seconds");
+var black = new byte[64 * 4];
+var visible = new byte[64 * 4];
+for (var i = 0; i < visible.Length; i += 4) { visible[i] = 40; visible[i + 1] = 90; visible[i + 2] = 180; visible[i + 3] = 255; }
+Check(PortalCaptureHealth.NearBlack(black) && !PortalCaptureHealth.NearBlack(visible), "blank frames are near-black and a desktop frame is not");
+Check(PortalVideoStream.ReuseCachedFrame(TimeSpan.FromMilliseconds(20)) && !PortalVideoStream.ReuseCachedFrame(TimeSpan.FromMilliseconds(251)),
+    "portal capture does not replay a cached frame older than 250 ms");
+var mapped = PortalOutputRefresh.Map([new PortalStreamBox(55, 0, 0, 3840, 2160)], [new WaylandOutputMode(7, 0, 0, 3840, 2160, 60000)]);
+Check(mapped.Count == 1 && mapped[55] == 60000, "portal stream refresh follows the Wayland mode instead of the PipeWire node id");
+var single = PortalOutputRefresh.Map([new PortalStreamBox(9, 0, 0, 0, 0)], [new WaylandOutputMode(3, 0, 0, 3840, 2160, 60000)]);
+Check(single[9] == 60000, "a single shared monitor still supplies refresh when the stream has no size");
+var placed = PortalOutputRefresh.Map(
+    [new PortalStreamBox(4, 0, 0, 1920, 1080), new PortalStreamBox(8, 1920, 0, 2560, 1440)],
+    [new WaylandOutputMode(2, 1920, 0, 2560, 1440, 120000), new WaylandOutputMode(1, 0, 0, 1920, 1080, 60000)]);
+Check(placed[4] == 60000 && placed[8] == 120000, "multiple portal streams match Wayland outputs by position and size");
+Check(PortalOutputRefresh.Map([new PortalStreamBox(1, 0, 0, 100, 100)], []).Count == 0, "missing Wayland modes stay empty for the 60 FPS fallback");
 Check(PortalVideoStream.ValidatePlane(2, 2, 12, 4, 24) == 16, "padded BGRA plane bounds");
 Check(PortalVideoStream.ValidatePlane(2, 2, -8, 8, 16) == 16, "negative stride plane bounds");
 foreach (var plane in new[] { (2,2,4,(nuint)0,(nuint)16), (2,2,-8,(nuint)0,(nuint)16), (2,2,8,(nuint)4,(nuint)16), (16384,16384,65536,(nuint)0,(nuint)1073741824) })
