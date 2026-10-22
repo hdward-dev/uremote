@@ -54,6 +54,8 @@ internal static class NativeGlib
     [DllImport(Gio)] internal static extern int g_unix_fd_list_get(nint list, int index, out nint error);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate void Signal(nint connection, nint sender, nint path, nint iface, nint signal, nint args, nint data);
     [DllImport(Gio)] internal static extern uint g_dbus_connection_signal_subscribe(nint connection, string sender, string iface, string signal, string path, nint arg0, int flags, Signal callback, nint data, nint destroy);
+    // Null sender or path is a wildcard. The string overload cannot pass a null match.
+    [DllImport(Gio, EntryPoint = "g_dbus_connection_signal_subscribe")] internal static extern uint g_dbus_connection_signal_subscribe_raw(nint connection, nint sender, nint iface, nint signal, nint path, nint arg0, int flags, Signal callback, nint data, nint destroy);
     [DllImport(Gio)] internal static extern void g_dbus_connection_signal_unsubscribe(nint connection, uint subscription);
 
     internal static void Check(nint error, string operation, CancellationToken ct = default)

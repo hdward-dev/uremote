@@ -111,6 +111,12 @@ frameRateRequest[10] = 0;
 Check(HostCaptureProtocol.Decode(frameRateRequest)?.Fps == 120, "explicit FPS remains usable when no standard tier is selected");
 var controllerCapture = HostCaptureProtocol.Decode(ControllerProtocol.Capture(2, 1));
 Check(controllerCapture is { Screen: 1, Quality: 3, Fps: 60 }, "native controller screen selection routes to requested display");
+foreach (var level in new[] { 1, 2, 3, 4, 5 })
+{
+    var update = HostCaptureProtocol.Decode(ControllerProtocol.Quality(9, level));
+    Check(update is { Screen: -1, Width: 0, Height: 0, Fps: 0 } && update.Quality == level,
+        "quality level " + level + " adjusts picture quality without resizing or forcing a frame rate");
+}
 var state = new LoginState("fixture-token", "fixture-user", "fixture-client", "fixture-device");
 var headers = UuSigning.BuildHeaders(state, "POST", "/api/v1/login/by_mobile", "{\"mobile\":\"测试<&>\"}", 1700000000);
 Check(headers["X-Param-SIGN"] == "38f485211c4d36d301b26682d807c1a9a5d705b2fdd7edf679929dfa8fd12a27", "signature matches independent upstream JavaScript fixture");

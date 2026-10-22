@@ -9,6 +9,7 @@ public sealed class DesktopControllerSession
 {
     private ControllerMediaPeer? peer;
     private int display;
+    private int quality = 5;
     public event Action<string>? Status;
     public event Action<int>? TargetPlatform;
     public event Action<string, byte[]>? DataReceived;
@@ -16,7 +17,13 @@ public sealed class DesktopControllerSession
     public event Action<int, ControllerFrame>? Frame;
     public event Action<int[]>? Displays;
     public bool SendInput(string json) => peer?.SendInput(json, Volatile.Read(ref display)) ?? false;
-    public void SelectDisplay(int id) { Volatile.Write(ref display, id); peer?.SelectDisplay(id); }
+    public void SetQuality(int level)
+    {
+        if (level is < 1 or > 5) return;
+        Volatile.Write(ref quality, level);
+        peer?.SetQuality(level);
+    }
+    public void SelectDisplay(int id) { Volatile.Write(ref display, id); peer?.SelectDisplay(id, Volatile.Read(ref quality)); }
     public async Task RunAsync(LoginState state, string target, string ffmpeg, CancellationToken ct, int captureType = 1, AssistanceRequest? assistance = null)
     {
         using var api = new UuMacHostApi(state);
@@ -65,7 +72,7 @@ public sealed class DesktopControllerSession
             var candidateQueue = Channel.CreateBounded<JsonObject>(128);
             media.LocalCandidate += c => { if (!candidateQueue.Writer.TryWrite(c)) done.TrySetException(new IOException("Too many candidates.")); };
             media.Status += s => { Status?.Invoke(s); if (s is "peer-failed" or "peer-closed" or "control-failed") done.TrySetException(new IOException("Remote connection ended.")); };
-            media.ControlReady += () => { Status?.Invoke("control-ready"); if (captureType == 1) media.SelectDisplay(Volatile.Read(ref display)); };
+            media.ControlReady += () => { Status?.Invoke("control-ready"); if (captureType == 1) media.SelectDisplay(Volatile.Read(ref display), Volatile.Read(ref quality)); };
             media.Video += (index, bytes) =>
             {
                 if (stop.IsCancellationRequested || index is < 0 or > 4) return;

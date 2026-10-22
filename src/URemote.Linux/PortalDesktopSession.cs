@@ -10,6 +10,7 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     private readonly SemaphoreSlim inputGate = new(1);
     private readonly CancellationTokenSource closed = new();
     private readonly Dictionary<uint, (PortalVideoStream Video, int Width, int Height)> streams = [];
+    private readonly List<PortalStreamBox> layout = [];
     private readonly HashSet<(string Method, int Code)> held = [];
     private readonly Dictionary<uint, string> touchMappings = [];
     private SharedDesktopTouch? touch;
@@ -18,6 +19,7 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     private string? session;
     private bool enableInput, disposed;
     public IReadOnlyList<WaylandGlobal> Outputs { get; private set; } = [];
+    internal IReadOnlyList<PortalStreamBox> Layout => layout;
     private PortalDesktopSession(PortalBus bus) => this.bus = bus;
 
     public static async Task ProbeAsync(CancellationToken ct)
@@ -89,9 +91,16 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
                 if (width <= 0 || height <= 0) throw new FormatException("无效的桌面逻辑尺寸。");
             }
             if (input && (width == 0 || height == 0)) throw new NotSupportedException("桌面未提供指针定位所需的逻辑尺寸。");
+            using var position = properties.Get("position");
+            var x = 0; var y = 0;
+            if (position is not null)
+            {
+                position.Require("(ii)"); using var px = position.Child(0); using var py = position.Child(1); x = px.Int(); y = py.Int();
+            }
             using var mapping = properties.Get("mapping_id");
             if (mapping is not null && !string.IsNullOrWhiteSpace(mapping.Text())) touchMappings.Add(node, mapping.Text());
             streams.Add(node, (new PortalVideoStream(node, checked((int)remote.DangerousGetHandle())), width, height));
+            layout.Add(new(node, x, y, width, height));
         }
         CheckAlive();
         Outputs = streams.Keys.Select(id => new WaylandGlobal(id, "wl_output", 1)).ToArray();

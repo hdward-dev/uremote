@@ -90,9 +90,14 @@ public static class DesktopHostSession
                     IAsyncDisposable authorization;
                     try { authorization = await DesktopBackend.OpenAsync(enableInput, controlStop.Token); }
                     catch (Exception e) when (e is InvalidOperationException or FormatException or UnauthorizedAccessException)
-                    { throw new NotSupportedException("桌面共享未获授权。", e); }
+                    {
+                        DesktopBackend.TakeRecycleReason();
+                        throw new NotSupportedException("桌面共享未获授权。", e);
+                    }
                     await using var desktop = authorization;
                     report("desktop-ready");
+                    if (DesktopBackend.TakeRecycleReason() is { } recycled)
+                        report("portal-session-recreated;reason=" + recycled);
                     await using var terminals = new HostTerminalManager();
                     var globals = await DesktopBackend.DiscoverAsync(controlStop.Token);
                     var available = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
@@ -108,10 +113,19 @@ public static class DesktopHostSession
                     await api.SetControllableAsync(true, controlStop.Token);
                     report("ready");
                     using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(controlStop.Token);
+                    bool Recycle(string reason)
+                    {
+                        if (!DesktopBackend.RequestPortalRecycle(reason)) return false;
+                        try { previewStop.Cancel(); } catch (ObjectDisposedException) { return false; }
+                        return true;
+                    }
                     var watch = WatchDisplaysAsync(available, previewStop, report);
-                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath); }
+                    var activity = DesktopBackend.UsingPortal
+                        ? DesktopBackend.WatchPortalSessionAsync(reason => Recycle(reason), report, previewStop.Token)
+                        : Task.CompletedTask;
+                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle); }
                     catch (OperationCanceledException) when (previewStop.IsCancellationRequested) { }
-                    finally { previewStop.Cancel(); await watch; }
+                    finally { previewStop.Cancel(); await Task.WhenAll(watch, activity); }
                     if (signal.Events.Completion.IsCompleted) { await signal.Events.Completion; throw new IOException("Publisher signal closed."); }
                 }
                 catch (OperationCanceledException) when (controlStop.IsCancellationRequested) { }

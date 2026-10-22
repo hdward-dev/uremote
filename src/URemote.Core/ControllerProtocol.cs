@@ -23,6 +23,13 @@ public static class ControllerProtocol
         Blob(4, enableClipboard ? Join(Int(1, 2), Int(2, 2), Int(3, 2)) : Int(3, 2))));
     public static byte[] Capture(ulong seq, int displayId, int quality = 3) => Envelope(seq, 9,
         Join(Int(2, 2), Int(3, (ulong)quality), Int(4, 1), Int(5, (ulong)displayId), Int(8, 1)));
+    // Quality-only RPC. Levels match HostVideoSettings: 1 fluent, 2 HD, 3 ultra, 4 original, 5 automatic.
+    // Screen and FPS stay unset so a change does not resize the stream or force 60 FPS.
+    public static byte[] Quality(ulong seq, int quality)
+    {
+        if (quality is < 1 or > 5) throw new ArgumentOutOfRangeException(nameof(quality));
+        return Join(Int(1, seq), Blob(21, Join(Blob(1, Int(1, seq)), Blob(4, Int(1, (ulong)quality)))));
+    }
     private static byte[] Envelope(ulong seq, uint tag, byte[] body) => Join(Int(1, seq), Int(2, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()), Blob(tag, body));
     private static byte[] Join(params byte[][] parts) => parts.SelectMany(x => x).ToArray();
     private static byte[] Int(uint tag, ulong value) => Join(Var(tag << 3), Var(value));

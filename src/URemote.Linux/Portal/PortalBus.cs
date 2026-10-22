@@ -14,14 +14,16 @@ internal sealed class PortalBus : IAsyncDisposable
     internal string SessionPath(string token) => Desktop + "/session/" +
         Marshal.PtrToStringUTF8(NativeGlib.g_dbus_connection_get_unique_name(connection))!.TrimStart(':').Replace('.', '_') + "/" + token;
     internal bool IsClosed => connection == 0 || NativeGlib.g_dbus_connection_is_closed(connection) != 0;
-    internal static async Task<PortalBus> ConnectAsync(CancellationToken ct)
+    internal static Task<PortalBus> ConnectAsync(CancellationToken ct) => ConnectAsync(2, ct);
+    internal static Task<PortalBus> ConnectSystemAsync(CancellationToken ct) => ConnectAsync(1, ct);
+    private static async Task<PortalBus> ConnectAsync(int busType, CancellationToken ct)
     {
         var bus = new PortalBus();
         try
         {
             bus.connection = await Task.Run(() => WithCancellation(ct, cancel =>
             {
-                var ptr = NativeGlib.g_bus_get_sync(2, cancel, out var error);
+                var ptr = NativeGlib.g_bus_get_sync(busType, cancel, out var error);
                 NativeGlib.Check(error, "连接 D-Bus", ct);
                 if (ptr == 0) throw new IOException("无法连接桌面 D-Bus。");
                 return ptr;
@@ -50,7 +52,12 @@ internal sealed class PortalBus : IAsyncDisposable
         using var result = await CallAsync("org.freedesktop.DBus.Properties", "Get", args, ct);
         using var field = result.Child(0); using var value = field.Unbox(); return value.UInt();
     }
-    internal async Task<uint> SubscribeAsync(string iface, string member, string path, Action<PortalValue> onSignal)
+    internal Task<uint> SubscribeAsync(string iface, string member, string path, Action<PortalValue> onSignal)
+        => SubscribeCoreAsync(Destination, iface, member, path, onSignal);
+    // sender or path null matches every sender or object. Used for ScreenSaver and login1.
+    internal Task<uint> SubscribeAnyAsync(string? sender, string iface, string member, string? path, Action<PortalValue> onSignal)
+        => SubscribeCoreAsync(sender, iface, member, path, onSignal);
+    private async Task<uint> SubscribeCoreAsync(string? sender, string iface, string member, string? path, Action<PortalValue> onSignal)
     {
         return await dispatcher.InvokeAsync(() =>
         {
@@ -60,12 +67,19 @@ internal sealed class PortalBus : IAsyncDisposable
                 using var value = new PortalValue(NativeGlib.g_variant_ref(args));
                 try { onSignal(value); } catch { /* Never unwind through native callbacks. */ }
             };
-            var id = NativeGlib.g_dbus_connection_signal_subscribe(connection, Destination, iface, member, path, 0, 0, callback, 0, 0);
-            if (id == 0) throw new IOException("无法订阅桌面授权状态。");
-            callbacks.Add(id, callback);
-            return id;
+            var senderPtr = Utf8(sender); var ifacePtr = Utf8(iface); var memberPtr = Utf8(member); var pathPtr = Utf8(path);
+            try
+            {
+                var id = NativeGlib.g_dbus_connection_signal_subscribe_raw(connection, senderPtr, ifacePtr, memberPtr, pathPtr, 0, 0, callback, 0, 0);
+                if (id == 0) throw new IOException("无法订阅桌面授权状态。");
+                callbacks.Add(id, callback);
+                return id;
+            }
+            finally { Free(senderPtr); Free(ifacePtr); Free(memberPtr); Free(pathPtr); }
         });
     }
+    private static nint Utf8(string? value) => value is null ? 0 : Marshal.StringToCoTaskMemUTF8(value);
+    private static void Free(nint value) { if (value != 0) Marshal.FreeCoTaskMem(value); }
     internal async Task UnsubscribeAsync(uint id)
     {
         await dispatcher.InvokeAsync(() =>
