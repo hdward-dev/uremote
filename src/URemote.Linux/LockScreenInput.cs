@@ -247,7 +247,7 @@ internal sealed class LockRoutedKeyboard : IDesktopKeyboard
 internal sealed class LockRoutedPointer : IDesktopPointer
 {
     private static readonly int[] Buttons = [1, 2, 4, 8, 16];
-    private readonly uint output;
+    private uint output;
     private readonly IDesktopPointer primary;
     private readonly IReadOnlyList<ScreenRect>? fixedScreens;
     private readonly Func<IReadOnlyList<ScreenRect>, CancellationToken, Task<ILockPointer>> acquire;
@@ -299,6 +299,8 @@ internal sealed class LockRoutedPointer : IDesktopPointer
         try
         {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
+            var mapped = DesktopBackend.ResolveOutput(output);
+            if (mapped != output) output = mapped;
             if (width > 0) this.width = width;
             if (height > 0) this.height = height;
             await ApplyLockAsync(source.IsLocked == true, ct).ConfigureAwait(false);

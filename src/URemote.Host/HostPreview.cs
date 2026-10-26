@@ -9,7 +9,7 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null, Func<string, bool>? recyclePortal = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null, Func<string, bool>? recyclePortal = null, Action<Action<string>>? bindCaptureRefresh = null)
     {
         report ??= Console.WriteLine;
         if (OperatingSystem.IsMacOS() && enableAudio) { enableAudio = false; report("audio-unavailable"); }
@@ -26,6 +26,9 @@ public static class HostPreview
         var sessions = new HostSignalSessions();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = stop.Token;
+        var refreshRequests = Channel.CreateBounded<string>(new BoundedChannelOptions(4) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+        bindCaptureRefresh?.Invoke(reason => refreshRequests.Writer.TryWrite(reason));
+        var refreshPump = bindCaptureRefresh is null ? Task.CompletedTask : RefreshPumpAsync();
         var candidates = Channel.CreateBounded<(HostPeerId Id, JsonObject Value)>(256);
         var disconnects = Channel.CreateUnbounded<CancellationTokenSource>(new() { SingleReader = true });
         HostMediaPeer? media = null;
@@ -46,7 +49,31 @@ public static class HostPreview
         finally
         {
             stop.Cancel();
+            refreshRequests.Writer.TryComplete();
+            try { await refreshPump; } catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             await ClosePeerAsync();
+        }
+
+        async Task RefreshPumpAsync()
+        {
+            try
+            {
+                await foreach (var reason in refreshRequests.Reader.ReadAllAsync(token))
+                {
+                    try
+                    {
+                        await DesktopBackend.RefreshPortalAsync(enableInput, token);
+                        report("portal-capture-refreshed;reason=" + reason);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+                    catch (Exception e) when (e is IOException or InvalidOperationException or DesktopSessionClosedException or UnauthorizedAccessException or TimeoutException or NotSupportedException or FormatException)
+                    {
+                        report("portal-capture-refresh-failed;type=" + e.GetType().Name);
+                        recyclePortal?.Invoke("refresh-failed");
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         }
 
         async Task SendCandidatesAsync()
@@ -371,7 +398,18 @@ public static class HostPreview
         {
         if (profiles.SingleVideoStream && profiles.SelectedScreen != index) return;
         var profile = profiles.Get(index);
-        var first = await DesktopBackend.CaptureAsync(output, ct: ct);
+        var seenGeneration = DesktopBackend.PortalGeneration;
+        CapturedScreen first;
+        while (true)
+        {
+            try { first = await DesktopBackend.CaptureAsync(output, ct: ct); break; }
+            catch (Exception e) when (RefreshInterrupt(e, seenGeneration))
+            {
+                report($"portal-capture-refresh-retry;screen={index + 1}");
+                await DesktopBackend.WaitCaptureReadyAsync(ct);
+                seenGeneration = DesktopBackend.PortalGeneration;
+            }
+        }
         await using var encoder = new StreamingH264Encoder(ffmpeg, (int)first.Width, (int)first.Height, first.YInverted, first.ShmFormat, profile.Fps, profile.Width, profile.Height, profile.Bitrate, profile.Crf);
         report($"video-encoder-config;screen={index + 1};width={profile.Width};height={profile.Height};fps={profile.Fps};bitrate={profile.Bitrate};crf={profile.Crf}");
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -383,6 +421,8 @@ public static class HostPreview
             var blackStart = 0L;
             try
             {
+                try
+                {
                 var cadence = System.Diagnostics.Stopwatch.StartNew();
                 var period = (double)System.Diagnostics.Stopwatch.Frequency / profile.Fps;
                 double nextFrame = 0;
@@ -416,7 +456,19 @@ public static class HostPreview
                     if (remaining > 0)
                         await Task.Delay(TimeSpan.FromMilliseconds(Math.Ceiling(remaining)), stop.Token);
                     else nextFrame = cadence.ElapsedTicks; // Skip missed deadlines instead of bursting to catch up.
-                    frame = await DesktopBackend.CaptureAsync(output, ct: stop.Token);
+                    try { frame = await DesktopBackend.CaptureAsync(output, ct: stop.Token); }
+                    catch (Exception e) when (RefreshInterrupt(e, seenGeneration))
+                    {
+                        report($"portal-capture-refresh-retry;screen={index + 1}");
+                        await DesktopBackend.WaitCaptureReadyAsync(stop.Token);
+                        break;
+                    }
+                }
+                }
+                catch (Exception e) when (RefreshInterrupt(e, seenGeneration))
+                {
+                    report($"portal-capture-refresh-retry;screen={index + 1}");
+                    await DesktopBackend.WaitCaptureReadyAsync(stop.Token);
                 }
             }
             finally { Array.Clear(frame.Pixels); encoder.CompleteInput(); }
@@ -478,6 +530,10 @@ public static class HostPreview
         finally { stop.Cancel(); Array.Clear(first.Pixels); }
         }
     }
+
+    private static bool RefreshInterrupt(Exception error, int seenGeneration) =>
+        error is DesktopSessionClosedException or ObjectDisposedException or IOException
+        && (DesktopBackend.CaptureRefreshActive || DesktopBackend.PortalGeneration != seenGeneration);
 
     private static List<RTCIceServer> ParseIceServers(JsonObject request)
     {

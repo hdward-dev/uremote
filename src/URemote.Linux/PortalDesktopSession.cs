@@ -18,6 +18,8 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     private SafeFileHandle? remote;
     private string? session;
     private bool enableInput, disposed;
+    internal bool IsDisposed => disposed;
+    internal bool TouchAvailable => !disposed && inputSession?.Available == true;
     public IReadOnlyList<WaylandGlobal> Outputs { get; private set; } = [];
     internal IReadOnlyList<PortalStreamBox> Layout => layout;
     private PortalDesktopSession(PortalBus bus) => this.bus = bus;
@@ -155,6 +157,23 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         if (!inputSession.Text(text)) throw new NotSupportedException("当前桌面未提供 EIS 文字输入，请使用被控端输入法或复制粘贴。");
         return Task.CompletedTask;
     }
+    internal bool TryApplyTouch(uint output, HostTouchEvent input)
+    {
+        if (disposed || inputSession is null) return false;
+        return inputSession.Apply(DesktopBackend.ResolveOutput(output), input);
+    }
+    internal void ResetTouch() { if (!disposed) inputSession?.Reset(); }
+    private static async Task<PortalDesktopSession> LiveAsync(PortalDesktopSession fallback, CancellationToken ct)
+    {
+        var live = DesktopBackend.CurrentPortal;
+        if (live is { IsDisposed: false }) return live;
+        if (DesktopBackend.CaptureRefreshActive || fallback.IsDisposed)
+            await DesktopBackend.WaitCaptureReadyAsync(ct).ConfigureAwait(false);
+        live = DesktopBackend.CurrentPortal;
+        if (live is { IsDisposed: false }) return live;
+        fallback.CheckAlive();
+        return fallback;
+    }
     public IDesktopPointer CreatePointer(uint output)
     {
         if (!streams.ContainsKey(output)) throw new ArgumentException("所选显示器不可用。");
@@ -168,32 +187,44 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
     public IDesktopKeyboard CreateKeyboard() => new Keyboard(this);
     private sealed class Pointer(PortalDesktopSession owner, uint output) : IDesktopPointer
     {
+        private uint stream = output;
         private readonly HashSet<int> held = [];
         public async Task ApplyAsync(HostMouseMessage message, PointerCoordinates coordinates, uint width, uint height, CancellationToken ct = default)
         {
             if (message.ScreenId is not null) throw new ArgumentException("请先解析显示器编号。");
+            for (var attempt = 0; ; attempt++)
+            try
+            {
+            var live = await LiveAsync(owner, ct).ConfigureAwait(false);
+            var id = DesktopBackend.ResolveOutput(stream);
+            if (id != stream) stream = id;
             if (message.Action == MouseAction.MoveAbsolute)
             {
                 WaylandVirtualPointer.AbsolutePayload(0, message.X, message.Y, coordinates, width, height);
                 var x = coordinates == PointerCoordinates.MacNormalized ? message.X : message.X / width;
                 var y = coordinates == PointerCoordinates.MacNormalized ? message.Y : message.Y / height;
-                ct.ThrowIfCancellationRequested(); owner.CheckAlive();
-                if (owner.inputSession?.Point(output, x, y) != true) throw new IOException("EIS 指针暂不可用。");
+                ct.ThrowIfCancellationRequested(); live.CheckAlive();
+                if (live.inputSession?.Point(id, x, y) != true) throw new IOException("EIS 指针暂不可用。");
             }
             else if (message.Action == MouseAction.Scroll)
             {
                 WaylandVirtualPointer.AxisPayload(0, 0, message.Y); WaylandVirtualPointer.AxisPayload(0, 1, message.X);
-                ct.ThrowIfCancellationRequested(); owner.CheckAlive();
-                if (owner.inputSession?.Scroll(message.X, -message.Y) != true) throw new IOException("EIS 滚轮暂不可用。");
+                ct.ThrowIfCancellationRequested(); live.CheckAlive();
+                if (live.inputSession?.Scroll(message.X, -message.Y) != true) throw new IOException("EIS 滚轮暂不可用。");
             }
             else if (message.Action is MouseAction.Press or MouseAction.Release or MouseAction.Click)
             {
                 var code = checked((int)WaylandVirtualPointer.LinuxButton(message.Button));
                 if (message.Action == MouseAction.Click && held.Contains(code)) return;
-                if (message.Action != MouseAction.Release) { held.Add(code); await owner.KeyAsync("button", code, true, ct); }
-                if (message.Action != MouseAction.Press) { await owner.KeyAsync("button", code, false, ct); held.Remove(code); }
+                if (message.Action != MouseAction.Release) { held.Add(code); await live.KeyAsync("button", code, true, ct); }
+                if (message.Action != MouseAction.Press) { await live.KeyAsync("button", code, false, ct); held.Remove(code); }
             }
             else throw new ArgumentException("不支持的鼠标操作。");
+            return;
+            }
+            catch (Exception e) when (attempt == 0 && e is (DesktopSessionClosedException or IOException or ObjectDisposedException)
+                && (DesktopBackend.CaptureRefreshActive || DesktopBackend.CurrentPortal != owner))
+            { await DesktopBackend.WaitCaptureReadyAsync(ct).ConfigureAwait(false); }
         }
         public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("button", key); held.Clear(); }
     }
@@ -204,11 +235,20 @@ internal sealed class PortalDesktopSession : IAsyncDisposable
         {
             if (WaylandVirtualKeyboard.LinuxKey(message.MacKey) is not { } value) return;
             var code = checked((int)value);
+            for (var attempt = 0; ; attempt++)
+            try
+            {
+            var live = await LiveAsync(owner, ct).ConfigureAwait(false);
             if (message.Action == KeyAction.Click && held.Contains(code)) return;
             if (message.Action != KeyAction.Release && !held.Contains(code))
-            { held.Add(code); await owner.KeyAsync("key", code, true, ct); }
+            { held.Add(code); await live.KeyAsync("key", code, true, ct); }
             if (message.Action != KeyAction.Press && held.Contains(code))
-            { await owner.KeyAsync("key", code, false, ct); held.Remove(code); }
+            { await live.KeyAsync("key", code, false, ct); held.Remove(code); }
+            return;
+            }
+            catch (Exception e) when (attempt == 0 && e is (DesktopSessionClosedException or IOException or ObjectDisposedException)
+                && (DesktopBackend.CaptureRefreshActive || DesktopBackend.CurrentPortal != owner))
+            { await DesktopBackend.WaitCaptureReadyAsync(ct).ConfigureAwait(false); }
         }
         public async ValueTask DisposeAsync() { foreach (var key in held) await owner.ReleaseKeyAsync("key", key); held.Clear(); }
     }

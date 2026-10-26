@@ -130,7 +130,7 @@ dotnet run --project tests/URemote.Checks -- --desktop-portal-check
 
 原生 Wayland 键盘路径可以向应用发送按键，但在本机 niri 26.04 上，Super+R / Super+Space 未触发桌面快捷键。现在原生后端优先使用有写权限的 `/dev/uinput`，通过内核虚拟键盘发送按下、松开事件；会话关闭释放按键并销毁设备，不读取物理键盘事件。没有权限时仍回退到 Wayland。日志只报告后端名称，不记录键入内容。
 
-KDE 锁屏（`kscreenlocker`）不接收 RemoteDesktop portal / EIS 的键鼠，画面仍可看到。屏幕锁定期间，观看者的键盘和绝对坐标鼠标改走 `/dev/uinput`：指针按各显示器在虚拟桌面上的位置和尺寸换算，支持多屏和负坐标。解锁后回到 portal。锁定以 `org.freedesktop.ScreenSaver` 的 `GetActive` 和 `ActiveChanged` 为准；logind `LockedHint` 只作补充，因为 Plasma 上它可以在锁屏期间仍为 no。被控在已锁定时启动也会先读 `GetActive`（日志 `portal-start-locked=1`）。`/dev/uinput` 不可写时记录 `keyboard-backend=portal;reason=uinput-unavailable` 并继续走 portal。切换日志形如 `keyboard-backend=uinput;reason=locked`。
+KDE 锁屏（`kscreenlocker`）不接收 RemoteDesktop portal / EIS 的键鼠，画面仍可看到。屏幕锁定期间，观看者的键盘和绝对坐标鼠标改走 `/dev/uinput`：指针按各显示器在虚拟桌面上的位置和尺寸换算，支持多屏和负坐标。解锁后回到 portal。锁定以 `org.freedesktop.ScreenSaver` 的 `GetActive` 和 `ActiveChanged` 为准；logind `LockedHint` 只作补充，因为 Plasma 上它可以在锁屏期间仍为 no。被控在已锁定时启动也会先读 `GetActive`（日志 `portal-start-locked=1`）。`/dev/uinput` 不可写时记录 `keyboard-backend=portal;reason=uinput-unavailable` 并继续走 portal。切换日志形如 `keyboard-backend=uinput;reason=locked`。提交的文字（IME）仍走 portal，锁屏密码需要离散按键加回车。已有 Portal 会话时按锁屏状态切换，`UREMOTE_KEYBOARD_BACKEND=uinput` 不会在解锁后仍强制离开 EIS。解锁或屏保结束会就地更换 PipeWire 采集（`portal-capture-refresh;reason=unblank`），不取消预览、不关闭 WebRTC、也不清空控制房间；只有观看者断开或被控停止才清房间。采集卡住（低码率、低亮度），或就地更换失败，仍会整段重建预览。
 
 `UREMOTE_KEYBOARD_BACKEND=auto` 为默认值；`uinput` 强制使用内核后端，无权限时报错；`wayland` 用于诊断回退。uinput 权限允许该账号注入系统输入，应只授予运行星栈的可信账号，不要设置全用户可写权限。NixOS 可在系统配置中加入以下内容（将 `YOUR_USER` 替换为实际用户名），按正常 NixOS 流程应用配置：
 
