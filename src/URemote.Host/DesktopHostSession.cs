@@ -113,9 +113,42 @@ public static class DesktopHostSession
                     await api.SetControllableAsync(true, controlStop.Token);
                     report("ready");
                     using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(controlStop.Token);
+                    var refreshGate = new object();
+                    Action<string>? refreshCapture = null;
+                    string? pendingRefresh = null;
+                    void PublishRefresh(string reason)
+                    {
+                        lock (refreshGate)
+                        {
+                            if (refreshCapture is null) pendingRefresh = reason;
+                            else refreshCapture(reason);
+                        }
+                    }
+                    void BindRefresh(Action<string> refresh)
+                    {
+                        string? queued;
+                        lock (refreshGate)
+                        {
+                            refreshCapture = refresh;
+                            queued = pendingRefresh;
+                            pendingRefresh = null;
+                        }
+                        if (queued is not null) refresh(queued);
+                    }
                     bool Recycle(string reason)
                     {
-                        if (!DesktopBackend.RequestPortalRecycle(reason)) return false;
+                        // Unlock/unblank keep this preview, the media peer, and the control room.
+                        // PipeWire is refreshed in place. Other reasons still restart the preview.
+                        var decision = PortalRecycleDecision.For(reason);
+                        if (decision.RefreshCapture)
+                        {
+                            DesktopBackend.NoteSoftRefresh();
+                            report("portal-capture-refresh;reason=" + reason);
+                            PublishRefresh(reason);
+                            return false;
+                        }
+                        if (!DesktopBackend.CaptureRefreshActive && !DesktopBackend.RequestPortalRecycle(reason)) return false;
+                        if (DesktopBackend.CaptureRefreshActive) return false;
                         try { previewStop.Cancel(); } catch (ObjectDisposedException) { return false; }
                         return true;
                     }
@@ -123,7 +156,7 @@ public static class DesktopHostSession
                     var activity = DesktopBackend.UsingPortal
                         ? DesktopBackend.WatchPortalSessionAsync(reason => Recycle(reason), report, previewStop.Token)
                         : Task.CompletedTask;
-                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle); }
+                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle, BindRefresh); }
                     catch (OperationCanceledException) when (previewStop.IsCancellationRequested) { }
                     finally { previewStop.Cancel(); await Task.WhenAll(watch, activity); }
                     if (signal.Events.Completion.IsCompleted) { await signal.Events.Completion; throw new IOException("Publisher signal closed."); }
@@ -191,9 +224,21 @@ public static class DesktopHostSession
     {
         try
         {
+            var portalTopology = DesktopBackend.UsingPortal;
+            var initialTopology = portalTopology ? DesktopBackend.PortalTopologySignature() : "";
             while (!stop.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(3), stop.Token);
+                // A lock-screen refresh replaces PipeWire node ids but not monitor geometry.
+                if (portalTopology)
+                {
+                    if (DesktopBackend.CaptureRefreshActive) continue;
+                    var topology = DesktopBackend.PortalTopologySignature();
+                    if (topology.Length == 0 || topology == initialTopology) continue;
+                    report("display-topology-changed");
+                    stop.Cancel();
+                    return;
+                }
                 var globals = await DesktopBackend.DiscoverAsync(stop.Token);
                 var current = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5);
                 if (!initial.SequenceEqual(current))

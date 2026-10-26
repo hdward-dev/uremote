@@ -24,6 +24,7 @@ if (args.Contains("--input-only"))
 }
 if (args.Contains("--touch-only")) { await EisTouchChecks.RunAsync(Check); Console.WriteLine($"{checks} isolated EIS checks passed."); return; }
 if (args.Contains("--lock-input")) { await LockInputChecks.RunAsync(Check); Console.WriteLine($"{checks} lock input checks passed."); return; }
+if (args.Contains("--preview-recycle")) { PreviewRecycleChecks.Run(Check); Console.WriteLine($"{checks} preview recycle checks passed."); return; }
 using (var text = PortalValue.String("fixture"))
 using (var number = PortalValue.UInt(3))
 using (var dict = PortalValue.Dict(("text", text), ("types", number)))
@@ -57,6 +58,7 @@ var placed = PortalOutputRefresh.Map(
 Check(placed[4] == 60000 && placed[8] == 120000, "multiple portal streams match Wayland outputs by position and size");
 Check(PortalOutputRefresh.Map([new PortalStreamBox(1, 0, 0, 100, 100)], []).Count == 0, "missing Wayland modes stay empty for the 60 FPS fallback");
 await LockInputChecks.RunAsync(Check);
+PreviewRecycleChecks.Run(Check);
 Check(PortalVideoStream.ValidatePlane(2, 2, 12, 4, 24) == 16, "padded BGRA plane bounds");
 Check(PortalVideoStream.ValidatePlane(2, 2, -8, 8, 16) == 16, "negative stride plane bounds");
 foreach (var plane in new[] { (2,2,4,(nuint)0,(nuint)16), (2,2,-8,(nuint)0,(nuint)16), (2,2,8,(nuint)4,(nuint)16), (16384,16384,65536,(nuint)0,(nuint)1073741824) })
