@@ -3,10 +3,12 @@ using System.Threading.Channels;
 namespace URemote.Linux;
 
 // Lock/blank leaves the existing KWin screencast node on black frames. Unlock has to drop that lease.
+// The same signals feed SessionLock so input can leave the portal while the greeter is up.
 internal static class PortalSessionActivity
 {
     internal static async Task WatchAsync(Action<string> onTransition, Action<string> report, CancellationToken ct)
     {
+        SessionLock.BeginInitialProbe();
         var transitions = Channel.CreateBounded<string>(new BoundedChannelOptions(4)
         { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -39,7 +41,8 @@ internal static class PortalSessionActivity
         try
         {
             await using var bus = await PortalBus.ConnectAsync(ct);
-            bool? active = null;
+            var active = -1; // -1 unknown, 0 clear, 1 active. ActiveChanged does not replay the current value.
+            var signaled = 0;
             var id = await bus.SubscribeAnyAsync(null, "org.freedesktop.ScreenSaver", "ActiveChanged", null, value =>
             {
                 try
@@ -47,18 +50,37 @@ internal static class PortalSessionActivity
                     value.Require("(b)");
                     using var state = value.Child(0);
                     var now = state.Boolean();
-                    if (active == true && !now) writer.TryWrite("unblank");
-                    active = now;
+                    Interlocked.Exchange(ref signaled, 1);
+                    if (Interlocked.Exchange(ref active, now ? 1 : 0) == 1 && !now) writer.TryWrite("unblank");
+                    SessionLock.ObserveScreensaver(now);
                 }
                 catch { /* Ignore malformed screensaver signals. */ }
             });
-            try { await Task.Delay(Timeout.Infinite, ct); }
+            try
+            {
+                try
+                {
+                    if (await SessionLock.TryReadScreenSaverActiveAsync(bus, ct) is bool now
+                        && Interlocked.CompareExchange(ref signaled, 1, 0) == 0)
+                    {
+                        Interlocked.Exchange(ref active, now ? 1 : 0);
+                        SessionLock.ObserveScreensaver(now);
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception e) when (IsBusFailure(e))
+                { report("session-lock-probe-failed;source=screensaver;type=" + e.GetType().Name); }
+                SessionLock.NoteProbeFinished(SessionLock.ScreensaverProbe, report);
+                await Task.Delay(Timeout.Infinite, ct);
+            }
             finally { try { await bus.UnsubscribeAsync(id); } catch (IOException) { } }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (Exception e) when (e is IOException or InvalidOperationException or FormatException or NotSupportedException
-            or DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException or UnauthorizedAccessException or TimeoutException)
-        { report("session-activity-watch-unavailable;source=screensaver;type=" + e.GetType().Name); }
+        catch (Exception e) when (IsBusFailure(e))
+        {
+            report("session-activity-watch-unavailable;source=screensaver;type=" + e.GetType().Name);
+            SessionLock.NoteProbeFinished(SessionLock.ScreensaverProbe, report);
+        }
     }
 
     private static async Task WatchLoginAsync(ChannelWriter<string> writer, Action<string> report, CancellationToken ct)
@@ -66,26 +88,14 @@ internal static class PortalSessionActivity
         try
         {
             await using var bus = await PortalBus.ConnectSystemAsync(ct);
-            using var pid = PortalValue.UInt((uint)Environment.ProcessId);
-            using var args = PortalValue.Tuple(pid);
-            using var reply = await bus.CallAsync("org.freedesktop.login1.Manager", "GetSessionByPID", args, ct,
-                "/org/freedesktop/login1", "org.freedesktop.login1");
-            using var pathValue = reply.Child(0);
-            var path = pathValue.Text();
-            if (!path.StartsWith("/org/freedesktop/login1/session/", StringComparison.Ordinal))
-                throw new FormatException("无效的登录会话。");
-            bool? locked = null;
-            try
+            var path = await SessionLock.LoginSessionPathAsync(bus, ct);
+            var locked = -1; // -1 unknown, 0 clear, 1 locked
+            if (await SessionLock.TryReadLockedHintAsync(bus, path, ct) is bool initial)
             {
-                using var iface = PortalValue.String("org.freedesktop.login1.Session");
-                using var name = PortalValue.String("LockedHint");
-                using var get = PortalValue.Tuple(iface, name);
-                using var current = await bus.CallAsync("org.freedesktop.DBus.Properties", "Get", get, ct, path, "org.freedesktop.login1");
-                using var field = current.Child(0);
-                using var boxed = field.Type == "v" ? field.Unbox() : null;
-                locked = (boxed ?? field).Boolean();
+                locked = initial ? 1 : 0;
+                SessionLock.ObserveLoginHint(initial);
             }
-            catch (Exception e) when (e is IOException or FormatException or InvalidOperationException) { }
+            SessionLock.NoteProbeFinished(SessionLock.LoginProbe, report);
             var properties = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.DBus.Properties", "PropertiesChanged", path, value =>
             {
                 try
@@ -98,24 +108,40 @@ internal static class PortalSessionActivity
                     if (hint is null) return;
                     using var boxed = hint.Type == "v" ? hint.Unbox() : null;
                     var now = (boxed ?? hint).Boolean();
-                    if (locked == true && !now) writer.TryWrite("unlock");
-                    locked = now;
+                    if (Interlocked.Exchange(ref locked, now ? 1 : 0) == 1 && !now) writer.TryWrite("unlock");
+                    SessionLock.ObserveLoginHint(now);
                 }
                 catch { /* Ignore unrelated property changes. */ }
             });
-            var unlock = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Session", "Unlock", path, _ => writer.TryWrite("unlock"));
+            var unlock = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Session", "Unlock", path, _ =>
+            {
+                writer.TryWrite("unlock");
+                Interlocked.Exchange(ref locked, 0);
+                SessionLock.ObserveLoginHint(false);
+            });
+            var lockSignal = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Session", "Lock", path, _ =>
+            {
+                Interlocked.Exchange(ref locked, 1);
+                SessionLock.ObserveLoginHint(true);
+            });
             try { await Task.Delay(Timeout.Infinite, ct); }
             finally
             {
                 try { await bus.UnsubscribeAsync(properties); } catch (IOException) { }
                 try { await bus.UnsubscribeAsync(unlock); } catch (IOException) { }
+                try { await bus.UnsubscribeAsync(lockSignal); } catch (IOException) { }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (Exception e) when (e is IOException or InvalidOperationException or FormatException or NotSupportedException
-            or DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException or UnauthorizedAccessException or TimeoutException)
-        { report("session-activity-watch-unavailable;source=login1;type=" + e.GetType().Name); }
+        catch (Exception e) when (IsBusFailure(e))
+        {
+            report("session-activity-watch-unavailable;source=login1;type=" + e.GetType().Name);
+            SessionLock.NoteProbeFinished(SessionLock.LoginProbe, report);
+        }
     }
+
+    private static bool IsBusFailure(Exception e) => e is IOException or InvalidOperationException or FormatException or NotSupportedException
+        or DllNotFoundException or EntryPointNotFoundException or PlatformNotSupportedException or UnauthorizedAccessException or TimeoutException;
 
     private readonly record struct StopwatchTimestamp(long Ticks)
     {
