@@ -120,21 +120,49 @@ public static class DesktopBackend
 
     public static Task<CapturedScreen> CaptureAsync(uint output, bool includeCursor = true, CancellationToken ct = default)
         => OperatingSystem.IsMacOS() ? MacDesktop.CaptureAsync(output, includeCursor, ct) : Volatile.Read(ref portal) is { } active ? active.CaptureAsync(output, ct) : WaylandScreenCapture.CaptureAsync(output, includeCursor, ct);
-    public static async Task<IDesktopPointer> CreatePointerAsync(uint output, CancellationToken ct)
-        => OperatingSystem.IsMacOS() ? new MacDesktop.Pointer(output) : Volatile.Read(ref portal) is { } active ? active.CreatePointer(output) : await WaylandVirtualPointer.CreateAsync(output, ct);
-    public static async Task<IDesktopKeyboard> CreateKeyboardAsync(CancellationToken ct)
+    // Portal stream boxes, copied so a later recycle cannot mutate a lock-screen mapping.
+    internal static ScreenRect[] ScreenLayout()
     {
-        if (OperatingSystem.IsMacOS()) return new MacDesktop.Keyboard();
-        if (Volatile.Read(ref portal) is { } active) return active.CreateKeyboard();
+        var active = Volatile.Read(ref portal);
+        if (active is null) return [];
+        var list = new List<ScreenRect>(active.Layout.Count);
+        foreach (var box in active.Layout)
+            if (box.Width > 0 && box.Height > 0)
+                list.Add(new ScreenRect(box.Node, box.X, box.Y, box.Width, box.Height));
+        return list.ToArray();
+    }
+    public static async Task<IDesktopPointer> CreatePointerAsync(uint output, CancellationToken ct, Action<string>? report = null, uint width = 0, uint height = 0)
+    {
+        if (OperatingSystem.IsMacOS()) return new MacDesktop.Pointer(output);
+        IDesktopPointer primary = Volatile.Read(ref portal) is { } active ? active.CreatePointer(output) : await WaylandVirtualPointer.CreateAsync(output, ct);
+        // KWin's lock screen ignores portal and wl_pointer injection. Keep a uinput absolute pointer ready to take over.
+        if (!OperatingSystem.IsLinux()) return primary;
+        return await LockScreenInput.WrapPointerAsync(output, primary, width, height, report ?? (_ => { }), ct);
+    }
+    public static async Task<IDesktopKeyboard> CreateKeyboardAsync(CancellationToken ct, Action<string>? report = null)
+    {
+        report ??= static _ => { };
+        if (OperatingSystem.IsMacOS())
+        {
+            report("keyboard-backend=macos");
+            return new MacDesktop.Keyboard();
+        }
+        if (Volatile.Read(ref portal) is { } active)
+            return await LockScreenInput.WrapKeyboardAsync(active.CreateKeyboard(), "portal", report, ct);
         var backend = Environment.GetEnvironmentVariable("UREMOTE_KEYBOARD_BACKEND") ?? "auto";
         if (backend is not ("auto" or "uinput" or "wayland"))
             throw new ArgumentException("UREMOTE_KEYBOARD_BACKEND must be auto, uinput or wayland.");
         if (backend != "wayland")
         {
-            try { return await UInputKeyboard.CreateAsync(ct); }
+            try
+            {
+                var keyboard = await UInputKeyboard.CreateAsync(ct);
+                report("keyboard-backend=uinput");
+                return keyboard;
+            }
             catch (UnauthorizedAccessException) when (backend == "auto") { }
         }
-        return await WaylandVirtualKeyboard.CreateAsync(ct);
+        return await LockScreenInput.WrapKeyboardAsync(await WaylandVirtualKeyboard.CreateAsync(ct), "wayland", report, ct);
     }
     public static Task<IDesktopTouch?> CreateTouchAsync(CancellationToken ct)
         => OperatingSystem.IsMacOS() ? Task.FromResult<IDesktopTouch?>(null) : Volatile.Read(ref portal) is { } active ? active.CreateTouchAsync(ct) : Task.FromResult<IDesktopTouch?>(null);

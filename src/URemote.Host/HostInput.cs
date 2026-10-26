@@ -11,8 +11,8 @@ internal static class HostInput
     {
         while (media.State != RTCPeerConnectionState.connected) await Task.Delay(100, ct);
         await using var fileTransfer = enableFiles ? new HostFileTransfer(media.SendData, report, ct) : null;
-        await using var keyboard = enableInput ? await DesktopBackend.CreateKeyboardAsync(ct) : null;
-        report("keyboard-backend=" + (keyboard is MacDesktop.Keyboard ? "macos" : keyboard is UInputKeyboard ? "uinput" : keyboard is WaylandVirtualKeyboard ? "wayland" : keyboard is null ? "disabled" : "portal"));
+        await using var keyboard = enableInput ? await DesktopBackend.CreateKeyboardAsync(ct, report) : null;
+        if (keyboard is null) report("keyboard-backend=disabled");
         await using var touch = await HostTouchInput.OpenAsync(enableInput, report, ct);
         await using var clipboard = enableClipboard ? new HostClipboard(media, report) : null;
         using var clipboardStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -24,7 +24,7 @@ internal static class HostInput
         {
             var screen = await DesktopBackend.CaptureAsync(output, ct: ct);
             Array.Clear(screen.Pixels);
-            var pointer = await DesktopBackend.CreatePointerAsync(output, ct);
+            var pointer = await DesktopBackend.CreatePointerAsync(output, ct, report, screen.Width, screen.Height);
             displays.Add((screen.Width, screen.Height, pointer));
         }
         var count = 0;
