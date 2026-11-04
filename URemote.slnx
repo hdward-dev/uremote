@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="src/AsterDock.Contracts/AsterDock.Contracts.csproj" />
+  <Project Path="src/AsterDock.UI/AsterDock.UI.csproj" />
   <Project Path="src/URemote.Core/URemote.Core.csproj" />
   <Project Path="src/URemote.Host/URemote.Host.csproj" />
   <Project Path="src/URemote.Linux/URemote.Linux.csproj" />
@@ -9,4 +10,8 @@
   <Project Path="tests/URemote.Media.Tests/URemote.Media.Tests.csproj" />
   <Project Path="tests/URemote.ProtocolChecks/URemote.Tests.csproj" />
   <Project Path="tests/URemote.AccountChecks/URemote.AccountChecks.csproj" />
+  <Project Path="tests/URemote.LocalChecks/URemote.LocalChecks.csproj" />
+  <Project Path="tests/URemote.PortalChecks/URemote.PortalChecks.csproj" />
+  <Project Path="tests/URemote.MacChecks/URemote.MacChecks.csproj" />
+  <Project Path="tests/URemote.LayoutChecks/URemote.LayoutChecks.csproj" />
 </Solution>

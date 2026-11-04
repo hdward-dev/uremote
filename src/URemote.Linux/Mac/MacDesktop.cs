@@ -33,6 +33,7 @@ public static class MacDesktop
     {
         ct.ThrowIfCancellationRequested();
         var permission = ur_permissions(input ? 1 : 0, 1);
+        Console.WriteLine($"macos-permissions;screen={(permission & 1) != 0};accessibility={(permission & 2) != 0};input={input}");
         if ((permission & 1) == 0) throw new NotSupportedException("请在 macOS 系统设置 → 隐私与安全性 → 屏幕录制中允许星栈，然后重新开启被控；系统可能要求重启应用。");
         if (input && (permission & 2) == 0) throw new NotSupportedException("请在 macOS 系统设置 → 隐私与安全性 → 辅助功能中允许星栈，然后重新开启被控。");
         lock(Gate) { if(hosting) throw new InvalidOperationException("已有 macOS 桌面共享会话。"); hosting=true; }

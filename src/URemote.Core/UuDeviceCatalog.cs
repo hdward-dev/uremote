@@ -5,6 +5,11 @@ namespace URemote.Core;
 public sealed record UuDevice(string Id, string Name, string Category, int Platform, string Status,
     bool Controllable, bool ControlledSupport, string Version, bool IsCurrent, string WallpaperUrl = "")
 {
+    public string Availability { get; init; } = "";
+    public int ParticipantCount { get; init; }
+    public bool Busy => Online && ParticipantCount > 0;
+    public bool CanConnect => !IsCurrent && Online && Controllable && ControlledSupport && !Busy && Availability is not ("control_off" or "offline");
+    public string ConnectionStatusName => !Online ? StatusName : Busy ? "被控中" : !Controllable || Availability == "control_off" ? "未开启被控" : StatusName;
     public bool Online => Status is "CONNECTED" or "ONLINE";
     public string PlatformName => IsCurrent && OperatingSystem.IsLinux() ? "Linux" : Platform switch
         { 1 => "Windows", 2 => "Android", 3 => "iOS", 4 => "macOS", _ => Category == "tv" ? "TV" : "未知平台" };
@@ -33,7 +38,10 @@ public static class UuDeviceCatalog
                 var platform = Text(entry, "platform");
                 result.Add(new(id, name.Length == 0 ? "未命名设备" : name, category,
                     int.TryParse(platform, out var number) ? number : 0, Text(entry, "status").ToUpperInvariant(),
-                    Boolean(entry, "controllable"), Boolean(entry, "controlled_support"), Text(entry, "version_name"), id == currentId, Wallpaper(entry)));
+                    Boolean(entry, "controllable"), Boolean(entry, "controlled_support"), Text(entry, "version_name"), id == currentId, Wallpaper(entry)) {
+                        Availability = Text(entry, "publisher_availability_status").ToLowerInvariant(),
+                        ParticipantCount = entry.TryGetProperty("participants_info", out var participants) && participants.ValueKind == JsonValueKind.Array ? participants.GetArrayLength() : 0
+                    });
             }
         }
         return result;

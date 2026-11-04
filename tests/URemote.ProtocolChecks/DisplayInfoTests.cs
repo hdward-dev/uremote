@@ -24,6 +24,13 @@ static class DisplayInfoTests
         check(mobile.Length == 2 && mobile.All(s => s.Single(f => f.Tag == 12).Value == 0)
             && mobile[0].Single(f => f.Tag == 1).Value == 0 && mobile[1].Single(f => f.Tag == 1).Value == 1,
             "iOS display list preserves physical screen ids while routing both to primary video track");
+        var parsed = HostDisplayInfo.Read(HostDisplayInfo.Encode(1, 2, 2));
+        var shared = HostDisplayInfo.Read(HostDisplayInfo.Encode(1, 2, 2, singleVideoStream: true));
+        check(parsed.Count == 2 && parsed[0] == new RemoteScreen(0, 0) && parsed[1] == new RemoteScreen(1, 1),
+            "controller reads a distinct video track for each physical screen");
+        check(shared.Count == 2 && shared[0] == new RemoteScreen(0, 0) && shared[1] == new RemoteScreen(1, 0),
+            "controller keeps a shared primary track when the host switches the screen source");
+        check(HostDisplayInfo.Read(ReadOnlyMemory<byte>.Empty).Count == 0, "an empty display list does not invent a screen");
     }
     // Independent minimal wire reader for the synthetic screen-list fixture; not the production parser.
     private static List<(int Tag, ulong Value, byte[] Bytes)> Fields(byte[] bytes)

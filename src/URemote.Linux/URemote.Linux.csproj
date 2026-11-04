@@ -4,5 +4,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="URemote.PortalChecks" />
     <InternalsVisibleTo Include="URemote.Host" />
+    <InternalsVisibleTo Include="URemote.Tests" />
   </ItemGroup>
 </Project>

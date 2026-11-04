@@ -39,10 +39,11 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 - macOS 本机被控，使用原生 ScreenCaptureKit 屏幕采集与键鼠输入，支持设备上线、壁纸预览和桌面快捷操作。
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
 - 显示器变化及部分网络、采集故障自动重试。
+- Linux NVIDIA 硬件编码与 4:4:4 真彩，支持按客户端能力切换色度和画质；需要 FFmpeg 包含 `h264_nvenc` 且驱动编码探测通过。真彩当前为 8 位 SDR，HDR 视频传输尚未实现。
 
 Linux 本机被控需要已登录的 Wayland 桌面及带 libx264 的 FFmpeg 9.0.0 或更高版本。niri 使用 wlr-screencopy 和虚拟键鼠协议；KDE Plasma / GNOME 使用原生桌面 Portal / PipeWire 对接，需要对应桌面的 Portal 实现及 GStreamer / PipeWire 原生库，不再依赖 Python 3 / PyGObject。详见 [本机依赖与配置](docs/u-remote.md#本机依赖与配置)。Linux 系统声音需要 PipeWire/pw-cat，文本剪贴板需要 wl-clipboard。
 
-macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“辅助功能”权限，并配置 FFmpeg 9.0.0 或更高版本（含 libx264）。macOS 系统声音、触控及被控远程终端尚未实现；Windows 本机被控后端尚未实现。
+macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“辅助功能”权限，并配置 FFmpeg 9.0.0 或更高版本（含 libx264）。macOS 系统声音、触控及被控远程终端尚未实现；Windows 本机被控后端源码已同步，本轮未进行 Windows 被控实机验证。
 
 声音、剪贴板、跨客户端兼容性及长期稳定性仍需验证。文件接收目录为 `~/Downloads/uurc`。不提供虚拟显示器，无登录桌面或系统休眠时不保证远控可用。
 
@@ -53,6 +54,7 @@ macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“�
 | 系统版本 | 桌面环境 | 会话类型 | 已验证范围 |
 | --- | --- | --- | --- |
 | NixOS 26.11（Zokor，x86_64；Linux 7.2.5） | niri 26.04 | Wayland | Windows / iOS 客户端连接本机、桌面传屏与键鼠控制、多屏画面及切屏、远程终端；本机主控通过外网连接 Windows，画面与键鼠正常 |
+| NixOS（x86_64，本机） | KDE Plasma | Wayland | 2026-11-04：主屏 3840×2160 60Hz、显示器 HDR 开启；iOS 主控普通及 4:4:4 真彩模式均流畅、接近 60 FPS。传输画面仍为 8 位 SDR |
 | Ubuntu 26.04.1 LTS（Kubuntu 桌面） | KDE Plasma 6.6.6 | Wayland | 桌面环境识别、Portal 授权与连续画面采集、键鼠接口、取消采集后保持共享、关闭会话，以及主题默认壁纸预览 |
 | macOS 26.5（arm64） | macOS 桌面；Mac mini，Apple M4（Mac16,10） | 本机图形会话 | 账号登录与设备上线、原生屏幕采集与键鼠控制、刷新率读取、当前壁纸识别与预览上传；不含系统声音、触控及被控远程终端 |
 
@@ -66,6 +68,7 @@ macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“�
 dotnet restore URemote.slnx
 dotnet build URemote.slnx -c Release --no-restore -m:1
 dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
+dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-timing-checks
 ```
 
 可执行 `python3 scripts/package.py` 生成 `.appbundle` 和 SHA-256 校验文件，输出位于 `artifacts/release/`。
@@ -80,9 +83,10 @@ dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
 | `URemote.Host` | 会话管理和开发诊断 |
 | `URemote.Module` | 星栈轻应用界面与远控窗口 |
 | `AsterDock.Contracts` | 星栈插件接口 |
+| `AsterDock.UI` | 与星栈同步的共享界面依赖；由宿主提供，不重复打入插件包 |
 | `tests` | 协议、媒体及集成检查 |
 
-本仓库从星栈提交 `2f71522` 拆出，可独立构建插件。依赖完整星栈宿主的 DesktopCheck 保留在星栈仓库。
+本仓库从星栈提交 `2f71522` 拆出，本次源码同步至星栈主线 [4320b01](https://github.com/hdward-dev/asterdock/commit/4320b011298cf431b9a1f3321b9e326495adf2d9)，可独立构建插件。插件界面依赖近期星栈宿主提供的共享 UI，请先更新星栈再导入插件。依赖完整星栈宿主的 DesktopCheck 不纳入此仓库的构建方案。
 
 ## 第三方声明
 

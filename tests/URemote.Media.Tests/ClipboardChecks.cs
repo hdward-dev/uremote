@@ -75,6 +75,26 @@ internal static class ClipboardChecks
         var data = sent.Select(x => HostClipboardTransfers.Decode(x.Bytes)).Where(x => x?.Kind == "block").SelectMany(x => x!.Data).ToArray();
         if (new UnicodeEncoding(false, false, true).GetString(data) != remote + '\0') throw new Exception("Clipboard read response encoding changed.");
         Array.Clear(data);
+        using (var recoverStop = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            var reads=0;var failures=0;
+            var delivered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var recovering=new HostClipboard((_,_)=>{delivered.TrySetResult();return true;},
+                eventName=>{if(eventName=="clipboard-unavailable")failures++;},
+                _=>++reads<=2 ? Task.FromException<string?>(new IOException("transient failure")) : Task.FromResult<string?>("recovered"),
+                (_,_)=>Task.CompletedTask);
+            var watch=recovering.WatchAsync(recoverStop.Token);
+            try { await delivered.Task.WaitAsync(recoverStop.Token); }
+            finally { recoverStop.Cancel();try{await watch;}catch(OperationCanceledException){} }
+            if(reads<3 || failures!=1)throw new Exception("Clipboard did not recover automatically or flooded diagnostics.");
+        }
+        byte[]? failureAck=null;
+        await using(var failing=new HostClipboard((_,bytes)=>{failureAck=bytes;return true;},_=>{},
+            _=>Task.FromResult<string?>(null),(_,_)=>throw new IOException("ownership not acquired")))
+            await failing.HandleAsync(new("TEXT_DATA_CHANNEL",false,HostClipboardProtocol.Change(91,"fixture")),default);
+        if(FileTransferProtocol.Number(FileTransferProtocol.Data(FileTransferProtocol.Data(failureAck!,22),6),1)==1)
+            throw new Exception("Clipboard write failure was acknowledged as success.");
+        Console.WriteLine("PASS: transient clipboard failure recovers without reconnecting and unsuccessful writes return failure acknowledgements");
         Console.WriteLine("PASS: distinct capability schemas, native Windows text, Mac format name, bidirectional text and out-of-order blocks");
     }
 }

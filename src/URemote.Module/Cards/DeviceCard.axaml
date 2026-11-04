@@ -24,8 +24,11 @@
     </Style>
   </Border.Styles>
   <Grid RowDefinitions="Auto,Auto,Auto">
-    <Button Classes="ad-flat" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-            Background="Transparent" BorderThickness="0" IsHitTestVisible="{Binding CanControl}"
+    <!-- Card padding stays so the info and toolbar keep their inset. Pull only the preview
+         through that padding so it sits on the inner edge of the border. DeviceCard.CornerRadius
+         plus ClipToBounds rounds the top corners to the card; the preview bottom stays square. -->
+    <Button Classes="ad-flat" Margin="-4,-4,-4,0" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+            Background="Transparent" BorderThickness="0" IsHitTestVisible="{Binding CanOpenRemote}"
             ToolTip.Tip="{Binding ConnectTip}" AutomationProperties.Name="{Binding ConnectName}" Click="Remote_Click">
       <Grid x:Name="preview" Height="{Binding PreviewHeight}" ClipToBounds="True" Background="{DynamicResource AppSubtleBrush}" SizeChanged="Preview_SizeChanged">
         <Image Source="{Binding Wallpaper}" Stretch="UniformToFill" Opacity="{Binding WallpaperOpacity}" IsVisible="{Binding HasWallpaper}"/>

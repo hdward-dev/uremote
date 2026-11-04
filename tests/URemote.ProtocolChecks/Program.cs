@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json.Nodes;
 using URemote.Core;
 using URemote.Probe;
@@ -111,6 +112,12 @@ frameRateRequest[10] = 0;
 Check(HostCaptureProtocol.Decode(frameRateRequest)?.Fps == 120, "explicit FPS remains usable when no standard tier is selected");
 var controllerCapture = HostCaptureProtocol.Decode(ControllerProtocol.Capture(2, 1));
 Check(controllerCapture is { Screen: 1, Quality: 3, Fps: 60 }, "native controller screen selection routes to requested display");
+var routedMouse = ControllerProtocol.RouteInput("{\"action\":\"mouse_move_absolute\",\"abs_x\":0.5,\"abs_y\":0.25}", 1);
+var routedInput = HostControlInput.Decode("CONTROL_DATA_CHANNEL", false, Encoding.UTF8.GetBytes(routedMouse), 2);
+Check(routedInput is { DisplayId: 1, Mouse.X: 0.5, Mouse.Y: 0.25 }, "controller mouse follows the selected display");
+var routedKey = ControllerProtocol.RouteInput("{\"action\":\"kbd_press\",\"key\":0,\"interrept\":true}", 1);
+Check(routedKey == "{\"action\":\"kbd_press\",\"key\":0,\"interrept\":true}", "keyboard input is not bound to a display");
+Check(ControllerProtocol.RouteInput(routedMouse, 0) == routedMouse, "an existing screen id is not rewritten");
 foreach (var level in new[] { 1, 2, 3, 4, 5 })
 {
     var update = HostCaptureProtocol.Decode(ControllerProtocol.Quality(9, level));
@@ -171,6 +178,14 @@ Reject(() => AssistanceRequest.Validate("not-an-id", "Fixture123"), "invalid par
 Reject(() => AssistanceRequest.Validate("123456789", ""), "empty partner code rejected");
 Check(StreamerConnectOptions.Decode(ControllerProtocol.ConnectOptions("fixture", assistance: true)).ControlConnectType == 2, "assistance connection is explicitly marked as assistance");
 await AssistanceJoinTests.Run(Check, assistFixture.ToJsonString());
+using (var busyCatalog = System.Text.Json.JsonDocument.Parse("""
+{"data":{"desktop_devices":[{"device_id":"busy","status":"CONNECTED","controllable":true,"controlled_support":true,"publisher_availability_status":"ready","participants_info":[{}]},{"device_id":"idle","status":"CONNECTED","controllable":true,"controlled_support":true,"publisher_availability_status":"ready","participants_info":[]},{"device_id":"off","status":"CONNECTED","controllable":false,"controlled_support":true,"publisher_availability_status":"control_off"}]}}
+""")) {
+    var entries = UuDeviceCatalog.Parse(busyCatalog.RootElement, "self");
+    Check(entries[0].Busy && !entries[0].CanConnect && entries[0].ConnectionStatusName == "被控中", "participants override ready availability and block duplicate connections");
+    Check(!entries[1].Busy && entries[1].CanConnect, "empty participants allow available device connections");
+    Check(!entries[2].CanConnect && entries[2].ConnectionStatusName == "未开启被控", "control off is shown distinctly from online");
+}
 var room = UuMacHostProtocol.ParseRoomResponse(roomFixture);
 Check(room.SignalingList.Count == 2 && room.WebSocketConnectTimeoutMs == 5000
     && room.Token == "fixture-room-secret", "observed room configuration schema parses synthetic data");
@@ -202,7 +217,13 @@ await api.GetDevicesAsync();
 Check(handler.Requests == 1, "device API sends direct .NET request");
 HostSessionTests.Run(Check);
 WaylandTests.Run(Check);
+await CaptureOnDemandTests.Run(Check);
+X11BackendTests.Run(Check);
+await X11BackendTests.LiveAsync(Check);
+X11WallpaperTests.Run(Check);
+await X11WallpaperTests.NoCaptureAsync(Check);
 ControlInputTests.Run(Check);
+CommittedTextTests.Run(Check);
 DisplayInfoTests.Run(Check);
 await SignalClientTests.Run(Check);
 await HostApiTests.Run(Check);

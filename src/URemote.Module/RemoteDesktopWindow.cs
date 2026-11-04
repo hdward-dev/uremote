@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using AsterDock.Contracts;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -13,63 +14,64 @@ using URemote.Host;
 using URemote.Media;
 namespace URemote.Module;
 
-public sealed class RemoteDesktopWindow : Window
+public sealed partial class RemoteDesktopWindow : Window
 {
     private readonly DesktopControllerSession controller = new();
     private readonly CancellationTokenSource stop = new();
-    private readonly Image video = new() { Stretch = Stretch.Uniform, Focusable = true };
-    private readonly TextBlock status = new() { Text = "正在连接…", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
-    private readonly ComboBox quality = new() { MinWidth = 108 };
-    private readonly ComboBox display = new() { MinWidth = 130, PlaceholderText = "显示屏", IsEnabled = false };
     private readonly HashSet<int> keys = [];
     private readonly HashSet<int> buttons = [];
     private readonly Dictionary<int, ControllerFrame> latest = [];
     private readonly object frameGate = new();
-    private readonly DispatcherTimer paintTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private readonly DispatcherTimer paintTimer = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private WriteableBitmap? bitmap;
     private ControllerFrame? painted;
-    private int[] displayIds = [];
+    private RemoteScreen[] screens = [];
     private int activeDisplay;
+    private int activeTrack;
+    private bool updatingDisplays;
+    private bool awaitingSwitch;
     private bool closed;
     private int inputSent;
     private bool inputFailed;
     private bool mac;
+    private IUserFeedbackService? feedback;
     public Task Completion { get; private set; } = Task.CompletedTask;
-    public RemoteDesktopWindow(UuDevice device, LoginState state, string ffmpeg, AssistanceRequest? assistance = null)
+    public RemoteDesktopWindow()
     {
+        InitializeComponent();
+    }
+
+    public RemoteDesktopWindow(UuDevice device, LoginState state, string ffmpeg, AssistanceRequest? assistance = null, IUserFeedbackService? feedback = null, bool forceJoin = false) : this()
+    {
+        this.feedback = feedback;
         mac = device.Platform == 4;
         controller.TargetPlatform += platform => mac = platform == 4;
-        Title = device.Name + " · U远程"; Width = 1280; Height = 800; MinWidth = 640; MinHeight = 440;
-        Background = Brushes.Black;
-        var disconnect = new Button { Content = "断开连接" }; disconnect.Click += (_, _) => Close();
-        var full = new Button { Content = "全屏" }; full.Click += (_, _) => { WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen; video.Focus(); };
-        quality.ItemsSource = new[] { "流畅", "高清", "超清", "原画", "自动" };
-        quality.SelectedIndex = 4;
-        ToolTip.SetTip(quality, "画质调节");
-        Avalonia.Automation.AutomationProperties.SetName(quality, "画质调节");
+        Title = device.Name + " · U远程";
+        status.Text = device.Name;
+        disconnect.Click += (_, _) => Close();
         quality.SelectionChanged += (_, _) => ApplyQuality();
         ApplyQuality();
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"), ColumnSpacing = 12, Margin = new Thickness(16, 10) };
-        bar.Children.Add(status); Grid.SetColumn(quality, 1); bar.Children.Add(quality); Grid.SetColumn(display, 2); bar.Children.Add(display); Grid.SetColumn(full, 3); bar.Children.Add(full); Grid.SetColumn(disconnect, 4); bar.Children.Add(disconnect);
-        var body = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") }; body.Children.Add(bar);
-        Grid.SetRow(video, 1); body.Children.Add(video);
-        var hint = new TextBlock { Text = "点击画面控制 · Ctrl + Alt + Esc 释放键鼠 · 关闭窗口断开连接", Foreground = Brushes.LightGray, Margin = new Thickness(16, 8), FontSize = 12 };
-        Grid.SetRow(hint, 2); body.Children.Add(hint); Content = body;
+        fullScreen.Click += (_, _) => { WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen; video.Focus(); };
         display.SelectionChanged += (_, _) => {
-            ReleaseInputs(); if (display.SelectedIndex >= 0 && display.SelectedIndex < displayIds.Length) {
-                activeDisplay = displayIds[display.SelectedIndex]; controller.SelectDisplay(activeDisplay);
-                video.Source = null; painted = null; status.Text = "正在切换显示屏…";
-            }
+            if (updatingDisplays || display.SelectedIndex < 0 || display.SelectedIndex >= screens.Length) return;
+            var selected = screens[display.SelectedIndex];
+            var trackChanged = selected.VideoTrack != activeTrack;
+            ReleaseInputs();
+            activeDisplay = selected.Id; activeTrack = selected.VideoTrack; awaitingSwitch = true;
+            controller.SelectDisplay(activeDisplay);
+            status.Text = "正在切换显示屏…";
+            if (!trackChanged) return;
+            painted = null;
+            if (HasFrame(activeTrack)) return;
+            video.Source = null; connectingOverlay.Text = "正在切换显示屏…"; connectingOverlay.IsLoading = true;
         };
         controller.Status += value => Console.WriteLine("controller-" + value);
-        controller.Status += value => Dispatcher.UIThread.Post(() => { if (!closed) status.Text = value switch {
+        controller.Status += value => Dispatcher.UIThread.Post(() => { if (!closed) ApplyConnectionStatus(value switch {
             "joining" => "正在请求连接…", "signaling" => "正在连接设备…", "negotiating" or "answer-received" => "正在建立画面通道…",
-            "ice-checking" => "正在尝试直连或中转…", "ice-failed" or "peer-failed" => "网络通道建立失败，请检查双方网络后重试。",
-            "control-ready" or "peer-connected" => Connected(), "peer-disconnected" => "连接中断…", "closed" => "连接已结束", _ => status.Text }; });
-        controller.Displays += ids => Dispatcher.UIThread.Post(() => {
-            if (closed) return; displayIds = ids; display.ItemsSource = ids.Select(x => "显示屏 " + (x + 1)).ToArray();
-            display.IsEnabled = ids.Length > 1; display.SelectedIndex = Math.Max(0, Array.IndexOf(ids, activeDisplay));
-        });
+            "ice-checking" => "正在尝试直连或中转…", "ice-failed" or "peer-failed" => FailChannel(),
+            "control-ready" or "peer-connected" => Connected(), "peer-disconnected" => "连接中断…", "closed" => "连接已结束", _ => status.Text },
+            value is "ice-failed" or "peer-failed" or "closed"); });
+        controller.Displays += list => Dispatcher.UIThread.Post(() => ApplyDisplays(list));
         controller.Frame += (index, frame) => { lock (frameGate) latest[index] = frame; };
         paintTimer.Tick += (_, _) => Paint();
         video.PointerPressed += (_, e) => {
@@ -90,7 +92,7 @@ public sealed class RemoteDesktopWindow : Window
         };
         video.KeyUp += (_, e) => { if (ControllerKeys.Map(e.PhysicalKey, e.Key, mac) is { } key) { if (keys.Remove(key)) SendKey(key, false); e.Handled = true; } };
         video.LostFocus += (_, _) => ReleaseInputs(); Deactivated += (_, _) => ReleaseInputs();
-        Opened += (_, _) => { paintTimer.Start(); Completion = RunAsync(state, device.Id, ffmpeg, assistance); };
+        Opened += (_, _) => { paintTimer.Start(); Completion = RunAsync(state, device.Id, ffmpeg, assistance, forceJoin); };
         Closed += (_, _) => { closed = true; ReleaseInputs(); stop.Cancel(); paintTimer.Stop(); video.Source = null; bitmap?.Dispose(); lock (frameGate) latest.Clear(); };
     }
     // Combo order is HostVideoSettings 1–5: fluent, HD, ultra, original, automatic.
@@ -128,23 +130,71 @@ public sealed class RemoteDesktopWindow : Window
         var y = Math.Clamp((p.Y - (video.Bounds.Height - frame.Height * scale) / 2) / scale, 0, frame.Height - 1);
         Send(new { action = "mouse_move_absolute", abs_x = x / frame.Width, abs_y = y / frame.Height });
     }
+    private void ApplyDisplays(IReadOnlyList<RemoteScreen> list)
+    {
+        if (closed || list.Count is < 1 or > 5) return;
+        updatingDisplays = true;
+        try
+        {
+            screens = list.ToArray();
+            display.ItemsSource = screens.Select(screen => "显示屏 " + (screen.Id + 1)).ToArray();
+            display.IsEnabled = screens.Length > 1;
+            var index = Array.FindIndex(screens, screen => screen.Id == activeDisplay);
+            if (index < 0) index = 0;
+            var selected = screens[index];
+            var changed = selected.Id != activeDisplay || selected.VideoTrack != activeTrack;
+            activeDisplay = selected.Id; activeTrack = selected.VideoTrack;
+            display.SelectedIndex = index;
+            if (!changed) return;
+            painted = null; awaitingSwitch = true; controller.SelectDisplay(activeDisplay);
+            if (HasFrame(activeTrack)) return;
+            video.Source = null; status.Text = "正在切换显示屏…";
+            connectingOverlay.Text = "正在切换显示屏…"; connectingOverlay.IsLoading = true;
+        }
+        finally { updatingDisplays = false; }
+    }
+    private bool HasFrame(int track) { lock (frameGate) return latest.ContainsKey(track); }
     private void Paint()
     {
-        ControllerFrame? frame; lock (frameGate) latest.TryGetValue(activeDisplay, out frame);
+        ControllerFrame? frame; lock (frameGate) latest.TryGetValue(activeTrack, out frame);
         if (closed || frame is null || ReferenceEquals(painted, frame)) return;
         if (bitmap is null || bitmap.PixelSize != new PixelSize(frame.Width, frame.Height)) {
             video.Source = null; bitmap?.Dispose(); bitmap = new WriteableBitmap(new PixelSize(frame.Width, frame.Height), new Vector(96, 96), PixelFormat.Rgba8888, AlphaFormat.Opaque); video.Source = bitmap;
         }
-        using (var fb = bitmap.Lock()) for (int y = 0; y < frame.Height; y++) Marshal.Copy(frame.Pixels, y * frame.Width * 4, fb.Address + y * fb.RowBytes, frame.Width * 4);
-        painted = frame; video.InvalidateVisual(); status.Text = $"已连接 · {frame.Width} × {frame.Height}";
+        using (var fb = bitmap.Lock())
+        {
+            if (fb.RowBytes == frame.Width * 4) Marshal.Copy(frame.Pixels, 0, fb.Address, frame.Pixels.Length);
+            else for (int y = 0; y < frame.Height; y++) Marshal.Copy(frame.Pixels, y * frame.Width * 4, fb.Address + y * fb.RowBytes, frame.Width * 4);
+        }
+        if (awaitingSwitch || painted is null || painted.Width != frame.Width || painted.Height != frame.Height)
+            status.Text = $"已连接 · {frame.Width} × {frame.Height}";
+        awaitingSwitch = false; painted = frame; video.InvalidateVisual(); connectingOverlay.IsLoading = false;
     }
-    private async Task RunAsync(LoginState state, string target, string ffmpeg, AssistanceRequest? assistance = null)
+    private string FailChannel()
     {
-        try { await controller.RunAsync(state, target, ffmpeg, stop.Token, assistance: assistance); }
+        const string message = "网络通道建立失败，请检查双方网络后重试。";
+        feedback.Notify(FeedbackKind.Error, message, "远程桌面");
+        return message;
+    }
+    private void ApplyConnectionStatus(string label, bool terminal)
+    {
+        if (terminal || painted is not null) { connectingOverlay.IsLoading = false; status.Text = label; return; }
+        connectingOverlay.IsLoading = true;
+        connectingOverlay.Text = label;
+        status.Text = label;
+    }
+    private async Task RunAsync(LoginState state, string target, string ffmpeg, AssistanceRequest? assistance = null, bool forceJoin = false)
+    {
+        try { await controller.RunAsync(state, target, ffmpeg, stop.Token, assistance: assistance, forceJoin: forceJoin); }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception e) {
             Console.WriteLine("controller-failed;type=" + e.GetType().Name);
-            if (!closed) status.Text = "连接失败，请确认设备在线、允许被控；协助连接还需检查协助码和验证码，或对方是否要求确认。关闭窗口后可重试。";
+            if (!closed)
+            {
+                connectingOverlay.IsLoading = false;
+                status.Text = "连接失败，请确认设备在线、允许被控；协助连接还需检查协助码和验证码，或对方是否要求确认。关闭窗口后可重试。";
+                feedback.Report("连接失败", e);
+            }
         }
         finally { if (!closed) { paintTimer.Stop(); ReleaseInputs(); } }
     }

@@ -5,6 +5,90 @@ using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 using URemote.Media;
 
+if(args.Contains("--wallpaper-console-check")) {
+    for (var i = 0; i < 3; i++) {
+        var png = await URemote.Linux.LinuxWallpaper.RenderAsync(Environment.GetEnvironmentVariable("UREMOTE_FFMPEG")!, CancellationToken.None);
+        if (png is not { Length: > 8 } || !png.AsSpan(0, 8).SequenceEqual(new byte[] {137,80,78,71,13,10,26,10})) throw new Exception("Wallpaper PNG missing");
+        Console.WriteLine($"PASS wallpaper render {i + 1}: {png.Length} bytes");
+    }
+    return;
+}
+
+if(args.Contains("--catalog-status-check")) {
+    var saved = JsonNode.Parse(File.ReadAllText(Environment.GetEnvironmentVariable("UREMOTE_IDENTITY")!))!;
+    var state = System.Text.Json.JsonSerializer.Deserialize<URemote.Core.LoginState>(saved["State"]!.ToJsonString())!;
+    var method = typeof(URemote.Core.UuMacHostProtocol).GetMethod("BuildRequest", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+    using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+    foreach (var endpoint in new[] { "/api/v1/device/groups/of/my", "/api/v1/device/list" }) {
+        using var request = (HttpRequestMessage)method.Invoke(null, [state, HttpMethod.Get, endpoint, "", null, null])!;
+        using var response = await http.SendAsync(request);
+        using var doc = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Console.WriteLine($"endpoint={endpoint};http={(int)response.StatusCode}");
+        void Inspect(System.Text.Json.JsonElement item) {
+            if (item.ValueKind == System.Text.Json.JsonValueKind.Array) { foreach (var child in item.EnumerateArray()) Inspect(child); }
+            else if (item.ValueKind == System.Text.Json.JsonValueKind.Object) {
+                if (item.TryGetProperty("participants_info", out var participants)) {
+                    Console.WriteLine("participants-kind=" + participants.ValueKind);
+                    if (participants.ValueKind == System.Text.Json.JsonValueKind.Object) foreach (var p in participants.EnumerateObject()) Console.WriteLine("participants-field=" + p.Name + ";kind=" + p.Value.ValueKind + (p.Value.ValueKind == System.Text.Json.JsonValueKind.Array ? ";count=" + p.Value.GetArrayLength() : p.Value.ValueKind == System.Text.Json.JsonValueKind.Number ? ";value=" + p.Value.GetRawText() : ""));
+                    if (participants.ValueKind == System.Text.Json.JsonValueKind.Array) Console.WriteLine("participants-count=" + participants.GetArrayLength());
+                }
+                foreach (var p in item.EnumerateObject()) {
+                    if (p.Value.ValueKind is System.Text.Json.JsonValueKind.Object or System.Text.Json.JsonValueKind.Array) Inspect(p.Value);
+                    else if (p.Name.Contains("status") || p.Name.Contains("availab") || p.Name.Contains("control") || p.Name == "code") Console.WriteLine(p.Name + "=" + p.Value);
+                }
+            }
+        }
+        Inspect(doc.RootElement);
+    }
+    return;
+}
+
+if(args.Contains("--decoder-realtime-check")) {
+    var ff = Environment.GetEnvironmentVariable("UREMOTE_FFMPEG")!;
+    var start = new System.Diagnostics.ProcessStartInfo(ff) { UseShellExecute=false, CreateNoWindow=true, RedirectStandardOutput=true, RedirectStandardError=true };
+    var size = Environment.GetEnvironmentVariable("UREMOTE_TEST_SIZE") ?? "1920x1080";
+    foreach(var a in new[] {"-v","error","-f","lavfi","-i",$"testsrc2=size={size}:rate=60","-frames:v","180","-c:v","libx264","-preset","ultrafast","-tune","zerolatency","-x264-params","aud=1:repeat-headers=1:keyint=60","-threads","2","-f","h264","pipe:1"}) start.ArgumentList.Add(a);
+    using var source = System.Diagnostics.Process.Start(start)!;
+    var err = source.StandardError.ReadToEndAsync();
+    using var data = new MemoryStream(); await source.StandardOutput.BaseStream.CopyToAsync(data); await source.WaitForExitAsync();
+    if(source.ExitCode != 0) throw new Exception(await err);
+    var parser = new AnnexBAccessUnits(); var units = new List<byte[]>(); var streamBytes=data.ToArray(); for(var offset=0;offset<streamBytes.Length;offset+=65536) units.AddRange(parser.Push(streamBytes.AsSpan(offset,Math.Min(65536,streamBytes.Length-offset)))); if(parser.Finish() is {} tail) units.Add(tail);
+    await using var decoder = new ControllerVideoDecoder(ff);
+    var clock = System.Diagnostics.Stopwatch.StartNew(); var arrivals = new List<double>(); var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    decoder.Frame += frame => { if ($"{frame.Width}x{frame.Height}" != size) { done.TrySetException(new Exception("Decoded frame was resized")); return; } lock(arrivals) { arrivals.Add(clock.Elapsed.TotalMilliseconds); if(arrivals.Count >= units.Count-2) done.TrySetResult(); } };
+    decoder.Failed += reason => done.TrySetException(new Exception(reason));
+    for(int i=0;i<units.Count;i++) { var delay=i*1000d/60-clock.Elapsed.TotalMilliseconds; if(delay>0) await Task.Delay(TimeSpan.FromMilliseconds(delay)); decoder.Push(units[i]); }
+    await done.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    var lag=arrivals.Select((t,i)=>t-i*1000d/60).Order().ToArray();
+    Console.WriteLine($"REALTIME size={size} frames={arrivals.Count} first_ms={arrivals[0]:F1} p50_ms={lag[lag.Length/2]:F1} p95_ms={lag[(int)(lag.Length*.95)]:F1} max_ms={lag[^1]:F1} tail_ms={arrivals[^1]-(arrivals.Count-1)*1000d/60:F1}");
+    return;
+}
+
+if(args.Contains("--decoder-load-check")) {
+    var ffmpeg = Environment.GetEnvironmentVariable("UREMOTE_FFMPEG") ?? "ffmpeg";
+    var info = new System.Diagnostics.ProcessStartInfo(ffmpeg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    foreach (var arg in new[] { "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=144", "-frames:v", "288", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-threads", "2", "-f", "h264", "pipe:1" }) info.ArgumentList.Add(arg);
+    using var source = System.Diagnostics.Process.Start(info)!;
+    var errors = source.StandardError.ReadToEndAsync();
+    using var data = new MemoryStream();
+    await source.StandardOutput.BaseStream.CopyToAsync(data);
+    await source.WaitForExitAsync();
+    if (source.ExitCode != 0) throw new Exception(await errors);
+    await using var decoder = new ControllerVideoDecoder(ffmpeg);
+    var frames = 0;
+    var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    decoder.Frame += _ => { if (Interlocked.Increment(ref frames) >= 280) done.TrySetResult(); };
+    decoder.Failed += reason => done.TrySetException(new Exception(reason));
+    var bytes = data.ToArray();
+    for (var offset = 0; offset < bytes.Length; offset += 16384) {
+        decoder.Push(bytes.AsSpan(offset, Math.Min(16384, bytes.Length - offset)).ToArray());
+        await Task.Yield();
+    }
+    await done.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    Console.WriteLine($"PASS decoder burst: {frames} frames, {bytes.Length} bytes");
+    return;
+}
+
 if(args.Contains("--candidate-signaling-check")) { await CandidateSignalingChecks.RunAsync(); return; }
 if(args.Contains("--clipboard-check")) { await ClipboardChecks.RunAsync(); return; }
 

@@ -13,24 +13,25 @@ public static class DesktopHostSession
 {
     public static SavedHostIdentity ReadIdentity(string path)
     {
-        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0
-            || (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
-                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0)
+            || (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0))
             throw new InvalidOperationException("身份文件权限必须为 600。");
         return JsonSerializer.Deserialize<SavedHostIdentity>(File.ReadAllText(path)) ?? throw new InvalidDataException();
     }
 
     public static async Task RunAsync(string identityPath, string ffmpeg, IReadOnlyList<uint> outputs,
-        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null, HostAdmission? admission = null, Func<string>? encoderPath = null)
+        bool enableInput, TimeSpan duration, Action<string> report, CancellationToken ct, bool enableAudio = false, bool enableClipboard = false, IReadOnlyList<int>? outputIndices = null, Action<HostControlConnection?>? connectionChanged = null, HostAdmission? admission = null, Func<string>? encoderPath = null, Func<HostSessionOptions>? sessionOptions = null)
     {
-        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
         if (outputs.Count > 5 || outputs.Distinct().Count() != outputs.Count || (duration != Timeout.InfiniteTimeSpan && (duration <= TimeSpan.Zero
             || duration > TimeSpan.FromHours(1))))
             throw new ArgumentException("无效的被控设置。");
-        await using var identityLock = new FileStream(identityPath + ".lock", new FileStreamOptions
-        { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None,
-            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
+        await using var identityLock = new FileStream(identityPath + ".lock", OperatingSystem.IsWindows()
+            ? new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None }
+            : new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
         var identity = ReadIdentity(identityPath);
         if (!identity.State.IsAuthenticated) throw new InvalidOperationException("请先登录。");
         if (HostWirePlatform.Windows && identity.Platform != 1)
@@ -48,6 +49,7 @@ public static class DesktopHostSession
             report("starting");
             var retrySeconds = 2;
             var profileUpdated = false;
+            string[]? lockedDisplayKeys = null;
             while (!deadline.IsCancellationRequested)
             {
             try
@@ -82,13 +84,18 @@ public static class DesktopHostSession
                         await WaitWhileDisabledAsync(signal, api, controlStop.Token, report);
                         continue;
                     }
-                    if (duration != Timeout.InfiniteTimeSpan) controlStop.CancelAfter(duration);
+                    var options = sessionOptions?.Invoke();
+                    var controlInput = options?.Input ?? enableInput;
+                    var controlAudio = options?.Audio ?? enableAudio;
+                    var controlClipboard = options?.Clipboard ?? enableClipboard;
+                    var controlDuration = options?.Duration ?? duration;
+                    if (controlDuration != Timeout.InfiniteTimeSpan) controlStop.CancelAfter(controlDuration);
                     ffmpeg = encoderPath?.Invoke() ?? ffmpeg;
                     if (!Path.IsPathFullyQualified(ffmpeg) || !File.Exists(ffmpeg))
                         throw new NotSupportedException("请检查编码器路径。");
                     report("desktop-authorizing");
                     IAsyncDisposable authorization;
-                    try { authorization = await DesktopBackend.OpenAsync(enableInput, controlStop.Token); }
+                    try { authorization = await DesktopBackend.OpenAsync(controlInput, controlStop.Token); }
                     catch (Exception e) when (e is InvalidOperationException or FormatException or UnauthorizedAccessException)
                     {
                         DesktopBackend.TakeRecycleReason();
@@ -96,20 +103,33 @@ public static class DesktopHostSession
                     }
                     await using var desktop = authorization;
                     report("desktop-ready");
+                    DesktopBackend.ReportPortalOutputs(report);
                     if (DesktopBackend.TakeRecycleReason() is { } recycled)
                         report("portal-session-recreated;reason=" + recycled);
                     await using var terminals = new HostTerminalManager();
                     var globals = await DesktopBackend.DiscoverAsync(controlStop.Token);
                     var available = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
-                    var selected = outputIndices is null
-                        ? (outputs.Count == 0 ? available : outputs.Where(available.Contains).ToArray())
-                        : available.Where((_, i) => outputIndices.Contains(i)).ToArray();
-                    if (selected.Length == 0)
+                    var details = await DesktopBackend.ReadOutputsAsync(controlStop.Token);
+                    if (options?.DisplayKeys is { } configured) lockedDisplayKeys = configured.ToArray();
+                    else if (lockedDisplayKeys is null && details.Count > 0)
+                    {
+                        // Convert legacy ordinals once. Reconnects must never apply
+                        // an old ordinal to a different physical output.
+                        var initial = outputIndices is null
+                            ? details.Where(x => outputs.Count == 0 || outputs.Contains(x.Id))
+                            : details.Where((_, i) => outputIndices.Contains(i));
+                        lockedDisplayKeys = initial.Select(x => x.Key).ToArray();
+                    }
+                    var selected = DesktopOutputSelection.Select(details, lockedDisplayKeys ?? []);
+                    while (selected.Length == 0)
                     {
                         report("waiting-for-display");
                         await Task.Delay(TimeSpan.FromSeconds(3), controlStop.Token);
-                        continue;
+                        details = await DesktopBackend.ReadOutputsAsync(controlStop.Token);
+                        if (lockedDisplayKeys is null && details.Count > 0) lockedDisplayKeys = details.Select(x => x.Key).ToArray();
+                        selected = DesktopOutputSelection.Select(details, lockedDisplayKeys ?? []);
                     }
+                    available = details.Select(x => x.Id).Order().ToArray();
                     await api.SetControllableAsync(true, controlStop.Token);
                     report("ready");
                     using var previewStop = CancellationTokenSource.CreateLinkedTokenSource(controlStop.Token);
@@ -156,7 +176,7 @@ public static class DesktopHostSession
                     var activity = DesktopBackend.UsingPortal
                         ? DesktopBackend.WatchPortalSessionAsync(reason => Recycle(reason), report, previewStop.Token)
                         : Task.CompletedTask;
-                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, enableInput, report, enableAudio, enableClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle, BindRefresh); }
+                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, controlInput, report, controlAudio, controlClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle, BindRefresh); }
                     catch (OperationCanceledException) when (previewStop.IsCancellationRequested) { }
                     finally { previewStop.Cancel(); await Task.WhenAll(watch, activity); }
                     if (signal.Events.Completion.IsCompleted) { await signal.Events.Completion; throw new IOException("Publisher signal closed."); }
@@ -167,6 +187,7 @@ public static class DesktopHostSession
                     admission.SetEnabled(false);
                     report("control-unavailable;type=" + e.GetType().Name);
                     if (OperatingSystem.IsMacOS()) report("macos-control-unavailable");
+                    if (OperatingSystem.IsWindows()) report("windows-control-unavailable");
                 }
                 finally
                 {

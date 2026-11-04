@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using AsterDock.Contracts;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -11,13 +12,11 @@ using URemote.Core;
 
 namespace URemote.Module;
 
-public sealed class LocalDesktopWindow : Window
+public sealed partial class LocalDesktopWindow : Window
 {
     private readonly CancellationTokenSource stop = new();
     private readonly ILocalDesktopSession session;
     private readonly LocalDesktopProtocol protocol;
-    private readonly Image desktop = new() { Stretch = Stretch.Uniform, Focusable = true };
-    private readonly TextBlock status = new() { Text = "正在连接…", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
     private readonly DispatcherTimer paintTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private readonly Dictionary<Key, uint> keys = [];
     private readonly object frameGate = new();
@@ -25,32 +24,39 @@ public sealed class LocalDesktopWindow : Window
     private WriteableBitmap? bitmap;
     private int buttons, mouseX, mouseY;
     private volatile bool closed;
+    private IUserFeedbackService? feedback;
     public Task Completion { get; private set; } = Task.CompletedTask;
     public event Action? Connected;
     private bool connected;
     internal bool IsConnected => connected && !closed && !Completion.IsCompleted;
 
-    public LocalDesktopWindow(LocalDesktopOptions options)
+    public LocalDesktopWindow()
     {
-        options.Validate(); protocol = options.Protocol;
+        InitializeComponent();
+        protocol = LocalDesktopProtocol.Vnc;
+        session = new VncDesktopSession();
+        feedback = null;
+    }
+
+    public LocalDesktopWindow(LocalDesktopOptions options, IUserFeedbackService? feedback = null) : this()
+    {
+        options.Validate(); protocol = options.Protocol; this.feedback = feedback;
         session = protocol == LocalDesktopProtocol.Vnc ? new VncDesktopSession() : new RdpDesktopSession(VerifyCertificateAsync);
         Title = $"{options.Host}:{options.Port} · {protocol.ToString().ToUpperInvariant()} · U远程";
-        Width = 1280; Height = 800; MinWidth = 640; MinHeight = 440; Background = Brushes.Black;
-        var disconnect = new Button { Content = "断开连接" }; disconnect.Click += (_, _) => Close();
-        var full = new Button { Content = "全屏" };
-        full.Click += (_, _) => { WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen; desktop.Focus(); };
-        var bar = new Grid { ColumnDefinitions = new("*,Auto,Auto"), ColumnSpacing = 12, Margin = new Thickness(16, 10) };
-        bar.Children.Add(status); Grid.SetColumn(full, 1); bar.Children.Add(full); Grid.SetColumn(disconnect, 2); bar.Children.Add(disconnect);
-        var body = new Grid { RowDefinitions = new("Auto,*,Auto") }; body.Children.Add(bar);
-        Grid.SetRow(desktop, 1); body.Children.Add(desktop);
-        var hint = new TextBlock { Text = "点击画面控制 · Ctrl + Alt + Esc 释放键鼠 · 关闭窗口断开连接", Foreground = Brushes.LightGray, FontSize = 12, Margin = new Thickness(16, 8) };
-        Grid.SetRow(hint, 2); body.Children.Add(hint); Content = body;
+        status.Text = $"{options.Host}:{options.Port}";
+        disconnect.Click += (_, _) => Close();
+        fullScreen.Click += (_, _) => { WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen; desktop.Focus(); };
         session.Frame += frame => { lock (frameGate) { if (!closed) latest = frame; } };
         session.Status += value => Dispatcher.UIThread.Post(() =>
         {
             if (closed) return;
+            if (!connected && value.StartsWith("已连接", StringComparison.Ordinal))
+            {
+                connected = true; connectingOverlay.IsLoading = false; status.Text = value; Connected?.Invoke(); return;
+            }
+            if (!connected && painted is null) { connectingOverlay.IsLoading = true; connectingOverlay.Text = value; }
+            else connectingOverlay.IsLoading = false;
             status.Text = value;
-            if (!connected && value.StartsWith("已连接", StringComparison.Ordinal)) { connected = true; Connected?.Invoke(); }
         });
         paintTimer.Tick += (_, _) => Paint();
         desktop.PointerPressed += (_, e) =>
@@ -101,11 +107,16 @@ public sealed class LocalDesktopWindow : Window
 
     private async Task ConnectAsync(LocalDesktopOptions options)
     {
-        try { await session.RunAsync(options, stop.Token); if (!closed) status.Text = "连接已结束"; }
+        try { await session.RunAsync(options, stop.Token); if (!closed) { connectingOverlay.IsLoading = false; status.Text = "连接已结束"; } }
         catch (Exception e) when (stop.IsCancellationRequested && e is OperationCanceledException or ObjectDisposedException or IOException or System.Net.Sockets.SocketException) { }
         catch (Exception e)
         {
-            if (!closed) status.Text = e is ArgumentException or InvalidOperationException or NotSupportedException or InvalidDataException ? e.Message : "连接失败或已中断，请检查服务端及网络。";
+            if (!closed)
+            {
+                connectingOverlay.IsLoading = false;
+                status.Text = e is ArgumentException or InvalidOperationException or NotSupportedException or InvalidDataException ? e.Message : "连接失败或已中断，请检查服务端及网络。";
+                feedback.Report("连接失败", e);
+            }
         }
         finally { if (!closed) { ReleaseInputs(); paintTimer.Stop(); } }
     }
@@ -114,7 +125,7 @@ public sealed class LocalDesktopWindow : Window
     {
         if (closed || stop.IsCancellationRequested) return;
         try { action(); }
-        catch (IOException) { status.Text = "输入发送失败，连接已断开。"; stop.Cancel(); }
+        catch (IOException) { status.Text = "输入发送失败，连接已断开。"; feedback.Notify(FeedbackKind.Error, status.Text, "远程桌面"); stop.Cancel(); }
     }
     private void ReleaseInputs()
     {
@@ -147,7 +158,7 @@ public sealed class LocalDesktopWindow : Window
         }
         using (var buffer = bitmap.Lock())
             for (var row = 0; row < frame.Height; row++) Marshal.Copy(frame.Pixels, row * frame.Width * 4, IntPtr.Add(buffer.Address, row * buffer.RowBytes), frame.Width * 4);
-        painted = frame; desktop.InvalidateVisual();
+        painted = frame; desktop.InvalidateVisual(); connectingOverlay.IsLoading = false;
     }
 
     private async Task<bool> VerifyCertificateAsync(DesktopCertificate certificate, CancellationToken token)
@@ -156,15 +167,7 @@ public sealed class LocalDesktopWindow : Window
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             if (closed || token.IsCancellationRequested) { result.TrySetResult(false); return; }
-            var dialog = new Window { Title = "确认 RDP 服务器证书", Width = 560, Height = 430, CanResize = true };
-            var accept = new Button { Content = "仅本次信任并连接" };
-            var reject = new Button { Content = "取消连接" };
-            accept.Click += (_, _) => { result.TrySetResult(true); dialog.Close(); };
-            reject.Click += (_, _) => dialog.Close();
-            dialog.Closed += (_, _) => result.TrySetResult(false);
-            var text = new TextBlock { Text = $"{(certificate.Changed ? "服务器证书已变化" : "服务器证书未受信任")}\n\n服务器：{certificate.Host}\n主体：{certificate.Subject}\n颁发者：{certificate.Issuer}\n指纹：{certificate.Fingerprint}", TextWrapping = TextWrapping.Wrap };
-            dialog.Content = new ScrollViewer { Content = new StackPanel { Margin = new Thickness(24), Spacing = 20,
-                Children = { text, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { reject, accept } } } } };
+            var dialog = new RdpCertificateWindow(certificate, result);
             _ = dialog.ShowDialog(this);
             _ = result.Task.ContinueWith(_ => Dispatcher.UIThread.Post(dialog.Close), TaskScheduler.Default);
         });

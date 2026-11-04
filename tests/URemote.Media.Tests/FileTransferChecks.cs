@@ -12,7 +12,7 @@ static class FileTransferChecks
         var root=Path.Combine(Path.GetTempPath(),"uremote-files-check-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
         var wire=Channel.CreateUnbounded<byte[]>();using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try {
-            await using var host=new HostFileTransfer((_,bytes)=>wire.Writer.TryWrite(bytes),_=>{},deadline.Token,root);
+            await using var host=new HostFileTransfer((_,bytes)=>bytes.Length<=131072 ? wire.Writer.TryWrite(bytes) : throw new Exception("Reply exceeded transport limit."),_=>{},deadline.Token,root);
             async Task<TransferMessage> Request(int kind,byte[] body) {
                 await host.HandleAsync(new("FILE_DATA_CHANNEL",false,Encode(false,77,kind,body)));
                 return Decode(await wire.Reader.ReadAsync(deadline.Token))!;
@@ -129,6 +129,18 @@ static class FileTransferChecks
             await Request(9,Join(TaskId(4),Int(2,7)));
             if(Directory.EnumerateFiles(root,".uremote-*.part").Any())throw new Exception("Canceled partial file was retained.");
             Console.WriteLine("PASS: cancellation removes partial file without changing existing files");
+            var large=Path.Combine(root,"large");Directory.CreateDirectory(large);
+            var random=new Random(23);const string alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            for(var i=0;i<700;i++) File.WriteAllBytes(Path.Combine(large,new string(Enumerable.Range(0,180).Select(_=>alphabet[random.Next(alphabet.Length)]).ToArray())),[]);
+            var largeReply=await Request(10,Join(TaskId(55),Text(2,"/large")));
+            if(Number(largeReply.Body,4)!=1 || Data(largeReply.Body,3).Length!=0)throw new Exception($"Large directory reply: result={Number(largeReply.Body,4)};compressed={Data(largeReply.Body,5).Length};direct={Data(largeReply.Body,3).Length}.");
+            using(var zip=new ZLibStream(new MemoryStream(Data(largeReply.Body,5)),CompressionMode.Decompress))
+            using(var expanded=new MemoryStream()) {
+                zip.CopyTo(expanded);
+                if(expanded.Length>524288 || Read(expanded.ToArray()).Count!=700)throw new Exception("Large directory was truncated or exceeded the receiver limit.");
+            }
+            Console.WriteLine("PASS: 700 long filenames remain fully browsable within the transport limit without truncation");
+
         } finally { Directory.Delete(root,true); }
     }
 }

@@ -4,12 +4,15 @@ namespace URemote.Linux;
 
 public sealed class WaylandClipboard : IAsyncDisposable
 {
+    private readonly string paste, copy;
+    public WaylandClipboard() : this(OperatingSystem.IsMacOS() ? "/usr/bin/pbpaste" : "wl-paste", OperatingSystem.IsMacOS() ? "/usr/bin/pbcopy" : "wl-copy") { }
+    internal WaylandClipboard(string paste, string copy) { this.paste = paste; this.copy = copy; }
     private Process? owner;
     private Task<string>? ownerError;
     public async Task<string?> ReadAsync(CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(2));
-        using var process = Process.Start(OperatingSystem.IsMacOS() ? Start("/usr/bin/pbpaste", false) : Start("wl-paste", false, "--no-newline", "--type", "text")) ?? throw new IOException();
+        using var process = Process.Start(OperatingSystem.IsMacOS() ? Start(paste, false) : Start(paste, false, "--no-newline", "--type", "text")) ?? throw new IOException();
         using var cancel = timeout.Token.Register(() => Kill(process));
         var errors = process.StandardError.ReadToEndAsync();
         using var bytes = new MemoryStream(); var buffer = new byte[4096];
@@ -31,13 +34,39 @@ public sealed class WaylandClipboard : IAsyncDisposable
     {
         if (Encoding.UTF8.GetByteCount(text) > 65536 || text.Contains('\0')) throw new ArgumentException("Clipboard text rejected.");
         await StopOwnerAsync();
-        owner = Process.Start(OperatingSystem.IsMacOS() ? Start("/usr/bin/pbcopy", true) : Start("wl-copy", true, "--foreground", "--type", "text/plain;charset=utf-8")) ?? throw new IOException();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        owner = Process.Start(OperatingSystem.IsMacOS() ? Start(copy, true) : Start(copy, true, "--foreground", "--type", "text/plain;charset=utf-8")) ?? throw new IOException();
         ownerError = owner.StandardError.ReadToEndAsync();
         var bytes = Encoding.UTF8.GetBytes(text);
-        try { await owner.StandardInput.BaseStream.WriteAsync(bytes, ct); owner.StandardInput.Close(); }
+        try
+        {
+            await owner.StandardInput.BaseStream.WriteAsync(bytes, timeout.Token); owner.StandardInput.Close();
+            if (OperatingSystem.IsMacOS())
+            {
+                await owner.WaitForExitAsync(timeout.Token);
+                if (owner.ExitCode != 0) throw new IOException("macOS 剪贴板写入失败。");
+            }
+            else
+            {
+                // Foreground wl-copy stays alive after acquiring ownership. Its
+                // stdin closing alone does not prove the compositor accepted it.
+                while (true)
+                {
+                    if (owner.HasExited) throw new IOException("剪贴板写入进程已退出。");
+                    if (await ReadAsync(timeout.Token) == text && !owner.HasExited) break;
+                    await Task.Delay(25, timeout.Token);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        { await StopOwnerAsync(); throw new IOException("等待剪贴板所有权超时。"); }
+        catch (DecoderFallbackException e)
+        { await StopOwnerAsync(); throw new IOException("无法确认剪贴板写入结果。", e); }
+        catch { await StopOwnerAsync(); throw; }
         finally { Array.Clear(bytes); }
-        if (OperatingSystem.IsMacOS()) { await owner.WaitForExitAsync(ct); if (owner.ExitCode != 0) throw new IOException("macOS 剪贴板写入失败。"); }
     }
+
     private static ProcessStartInfo Start(string exe, bool input, params string[] args)
     {
         var path = Path.IsPathFullyQualified(exe) && File.Exists(exe) ? exe : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(p => Path.Combine(p, exe)).FirstOrDefault(File.Exists)

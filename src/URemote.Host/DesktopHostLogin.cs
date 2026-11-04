@@ -19,10 +19,12 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     { this.path = path; this.identityLock = identityLock; this.identity = identity; api = new(identity.State); }
     public static DesktopHostLogin Open(string path)
     {
-        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
         path = Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var gate = new FileStream(path + ".lock", new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite,
-            Share = FileShare.None, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
+        var gate = new FileStream(path + ".lock", OperatingSystem.IsWindows()
+            ? new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None }
+            : new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite,
+                Share = FileShare.None, UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite });
         try
         {
             SavedHostIdentity identity;
@@ -31,8 +33,11 @@ public sealed class DesktopHostLogin : IAsyncDisposable
             {
                 var client = Guid.NewGuid().ToString();
                 var profile = new HostDeviceProfile(LinuxDeviceProfile.DeviceName, client, Guid.NewGuid().ToString(), Environment.OSVersion.VersionString,
-                    RuntimeInformation.ProcessArchitecture.ToString(), GC.GetGCMemoryInfo().TotalAvailableMemoryBytes.ToString(),
-                    "NixOS", "Linux desktop", "", "NixOS", "Linux", "", "", [], 96);
+                    RuntimeInformation.ProcessArchitecture.ToString(), (GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1048576).ToString(),
+                    OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "Mac" : "NixOS",
+                    OperatingSystem.IsWindows() ? "Windows desktop" : OperatingSystem.IsMacOS() ? "Mac desktop" : "Linux desktop",
+                    "", OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "NixOS",
+                    OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux", "", "", [], 96);
                 identity = new(new(ClientId: client, Channel: "gwqd"), LinuxDeviceProfile.Refresh(profile), "uninitialized");
             }
             return new(path, gate, identity);
@@ -84,12 +89,14 @@ public sealed class DesktopHostLogin : IAsyncDisposable
     }
     private async Task SaveAsync(CancellationToken ct)
     {
-        if (OperatingSystem.IsWindows() || (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())) throw new PlatformNotSupportedException();
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) throw new PlatformNotSupportedException();
         var temp = path + ".new-" + Guid.NewGuid().ToString("N");
         try
         {
-            await using (var file = new FileStream(temp, new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write,
-                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite }))
+            await using (var file = new FileStream(temp, OperatingSystem.IsWindows()
+                ? new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write }
+                : new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write,
+                    UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite }))
             { await JsonSerializer.SerializeAsync(file, identity, cancellationToken: ct); await file.FlushAsync(ct); }
             File.Move(temp, path, true);
         }

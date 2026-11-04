@@ -1,23 +1,17 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Layout;
+using Avalonia.Controls.Shapes;
 using Avalonia.Input.Platform;
+using Avalonia.Layout;
+using Avalonia.Media;
 using URemote.Core;
 using URemote.Host;
 namespace URemote.Module;
 public sealed partial class URemoteView
 {
-    private readonly SelectableTextBlock assistanceId = new() { Text = "正在获取…", FontSize = 26, FontWeight = Avalonia.Media.FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center };
-    private readonly TextBox assistanceCode = new() { IsReadOnly = true, PasswordChar = '•', FontSize = 14,
-        Height = 34, VerticalContentAlignment = VerticalAlignment.Center };
-    private readonly TextBlock assistanceHint = new() { IsVisible = false, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly TextBlock assistanceHelp = new() { MaxWidth = 260, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private string? assistanceDevice;
     private bool allowAssistance = true;
-    private readonly ToggleSwitch assistanceSwitch = new() { OnContent = null, OffContent = null };
-    private Control? assistanceCredentials;
     private AssistanceCodeSettings? codeSettings;
-    private readonly ComboBox codeMode = new() { ItemsSource = new[] { "临时验证码", "自定义验证码" }, SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
     private bool changingCodeMode;
     private Action? updateCodeModeUi;
     private string AssistanceSettingsFile => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(settingsFile)!, "assistance-secret.json");
@@ -48,7 +42,7 @@ public sealed partial class URemoteView
         assistanceCode.PasswordChar = '•';
         UpdateAssistanceState();
     }
-    private Control BuildAssistanceCard()
+    private void WireAssistanceCard()
     {
         assistanceSwitch.IsChecked = allowAssistance;
         Avalonia.Automation.AutomationProperties.SetName(assistanceSwitch, "允许远程协助");
@@ -59,72 +53,27 @@ public sealed partial class URemoteView
             if(enabled == allowAssistance) return;
             try
             {
-                System.IO.File.WriteAllText(settingsFile, System.Text.Json.JsonSerializer.Serialize(new Settings(identity.Text ?? "", appliedEncoder, enabled, hostEnabled)));
+                SaveSettings(assistanceOverride: enabled);
                 allowAssistance = enabled;
                 var device = assistanceDevice ?? DesktopHostSession.ReadIdentity(identity.Text ?? "").State.DeviceId;
                 HostAssistance.SetEnabled(device, enabled);
                 UpdateAssistanceState();
             }
-            catch { assistanceHint.Text = "开关设置保存失败，请重试。"; assistanceSwitch.IsChecked = allowAssistance; }
+            catch { assistanceHint.Text = "开关设置保存失败，请重试。"; assistanceSwitch.IsChecked = allowAssistance; ReportFailure(assistanceHint.Text, "远程协助"); }
         };
-        var heading = new Grid { ColumnDefinitions = new("*,Auto") };
-        heading.Children.Add(Text("允许远程协助",16)); Grid.SetColumn(assistanceSwitch,1); heading.Children.Add(assistanceSwitch);
-        ApplyTheme(assistanceId, TextBlock.ForegroundProperty, "AppStrongTextBrush");
-        var copyIcon = new Avalonia.Controls.Shapes.Path {
-            Data = Avalonia.Media.Geometry.Parse("M8,7 H19 V21 H8 Z M5,17 H3 V3 H14 V5"),
-            Width = 18, Height = 18, Stretch = Avalonia.Media.Stretch.Uniform, StrokeThickness = 1.5 };
-        ApplyTheme(copyIcon, Avalonia.Controls.Shapes.Shape.StrokeProperty, "AppStrongTextBrush");
-        var copyId = new Button { Content = copyIcon, Width = 34, Height = 34,
-            Padding = new Thickness(8), Background = Avalonia.Media.Brushes.Transparent, BorderThickness = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center };
-        ToolTip.SetTip(copyId, "复制协助码");
-        Avalonia.Automation.AutomationProperties.SetName(copyId, "复制协助码");
-        var assistanceRow = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 8 };
-        assistanceRow.Children.Add(assistanceId); Grid.SetColumn(copyId, 1); assistanceRow.Children.Add(copyId);
-        Button IconButton(string label, string geometry)
-        {
-            var icon = new Avalonia.Controls.Shapes.Path { Data = Avalonia.Media.Geometry.Parse(geometry),
-                StrokeThickness = 1.5 };
-            ApplyTheme(icon, Avalonia.Controls.Shapes.Shape.StrokeProperty, "AppStrongTextBrush");
-            var viewport = new Viewbox { Width = 18, Height = 18,
-                Child = new Canvas { Width = 24, Height = 24, Children = { icon } } };
-            var button = new Button { Content = viewport, Width = 30, Height = 34, Padding = new Thickness(0),
-                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
-                Background = Avalonia.Media.Brushes.Transparent, BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-            ToolTip.SetTip(button, label); Avalonia.Automation.AutomationProperties.SetName(button, label);
-            return button;
-        }
         static Avalonia.Controls.Shapes.Path ButtonIcon(Button button) =>
             (Avalonia.Controls.Shapes.Path)((Canvas)((Viewbox)button.Content!).Child!).Children[0];
         const string eye = "M2,12 C6,4 18,4 22,12 C18,20 6,20 2,12 Z M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12";
-        var copyCode = IconButton("复制验证码", "M8,7 H19 V21 H8 Z M5,17 H3 V3 H14 V5");
-        var reveal = IconButton("显示验证码", eye);
-        var rotate = IconButton("更换验证码", "M20,9 A8,8 0 1 0 20,16 M20,3 V9 H14");
         void UpdateRevealIcon()
         {
             var visible = assistanceCode.PasswordChar == '\0';
-            ButtonIcon(reveal).Data = Avalonia.Media.Geometry.Parse(eye + (visible ? " M3,3 L21,21" : ""));
+            ButtonIcon(reveal).Data = Geometry.Parse(eye + (visible ? " M3,3 L21,21" : ""));
             assistanceCode.FontSize = visible ? 18 : 14;
             var label = visible ? "隐藏验证码" : "显示验证码";
             ToolTip.SetTip(reveal, label); Avalonia.Automation.AutomationProperties.SetName(reveal, label);
         }
         assistanceCode.PropertyChanged += (_, e) => { if (e.Property == TextBox.PasswordCharProperty) UpdateRevealIcon(); };
         UpdateRevealIcon();
-        var codeRow = new Grid { ColumnDefinitions = new("*,Auto,Auto,Auto"), ColumnSpacing = 2 };
-        assistanceCode.MinWidth = 0; assistanceCode.VerticalAlignment = VerticalAlignment.Center;
-        codeRow.Children.Add(assistanceCode);
-        Grid.SetColumn(reveal, 1); codeRow.Children.Add(reveal);
-        Grid.SetColumn(copyCode, 3); codeRow.Children.Add(copyCode);
-        Grid.SetColumn(rotate, 2); codeRow.Children.Add(rotate);
-        var customInput = new TextBox { PasswordChar = '●', MaxLength = 32, PlaceholderText = "8–32 位，包含字母和数字" };
-        var customConfirm = new TextBox { PasswordChar = '●', MaxLength = 32, PlaceholderText = "再次输入验证码" };
-        var saveCustom = new Button { Content = "保存" };
-        var cancelCustom = new Button { Content = "取消" };
-        var removeCustom = new Button { Content = "清除自定义码" };
-        var customEditor = new StackPanel { IsVisible = false, Spacing = 8, Children = {
-            Text("设置自定义验证码", 13), customInput, customConfirm,
-            new WrapPanel { Children = { saveCustom, cancelCustom, removeCustom } },
-            Text("仅保存在本机私有文件中，重启后保留。", 11, true) } };
         void OpenEditor() { customInput.Text = customConfirm.Text = ""; customEditor.IsVisible = true; customInput.Focus(); }
         void CloseEditor() { customInput.Text = customConfirm.Text = ""; customEditor.IsVisible = false; }
         saveCustom.Click += (_, _) => {
@@ -152,14 +101,13 @@ public sealed partial class URemoteView
         updateCodeModeUi = () => {
             changingCodeMode = true; codeMode.SelectedIndex = codeSettings?.UseCustom == true ? 1 : 0; changingCodeMode = false;
             var custom = codeSettings?.UseCustom == true;
-            ButtonIcon(rotate).Data = Avalonia.Media.Geometry.Parse(custom
+            ButtonIcon(rotate).Data = Geometry.Parse(custom
                 ? "M4,16 L15,5 L19,9 L8,20 H4 Z M14,6 L18,10" : "M20,9 A8,8 0 1 0 20,16 M20,3 V9 H14");
             ToolTip.SetTip(rotate, custom ? "修改自定义验证码" : "刷新临时验证码");
             Avalonia.Automation.AutomationProperties.SetName(rotate, custom ? "修改自定义验证码" : "刷新临时验证码");
             removeCustom.IsVisible = !string.IsNullOrEmpty(codeSettings?.CustomCode);
         };
         updateCodeModeUi();
-        var reload = new Button { Content = "重新获取", HorizontalAlignment = HorizontalAlignment.Stretch };
         copyId.Click += async (_, _) => await CopyAssistanceAsync(assistanceId.Text);
         copyCode.Click += async (_, _) => await CopyAssistanceAsync(assistanceCode.Text);
         reveal.Click += (_, _) => { var hide = assistanceCode.PasswordChar == '\0'; assistanceCode.PasswordChar = hide ? '•' : '\0';  };
@@ -168,30 +116,15 @@ public sealed partial class URemoteView
             if (assistanceDevice is { } device) { HostAssistance.Rotate(device); UpdateAssistanceState(); }
         };
         reload.Click += async (_, _) => await RefreshAssistanceAsync();
-        var help = new Button { Content = "!", Width = 28, Height = 28,
-            Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center,
-            HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
-            Flyout = new Flyout { Content = assistanceHelp } };
-        Avalonia.Automation.AutomationProperties.SetName(help, "验证码使用说明");
-        ToolTip.SetTip(help, "验证码使用说明");
-        var modeRow = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 6 };
-        modeRow.Children.Add(codeMode); Grid.SetColumn(help, 1); modeRow.Children.Add(help);
         assistanceHint.IsVisible = !string.IsNullOrWhiteSpace(assistanceHint.Text);
         assistanceHint.PropertyChanged += (_, e) => {
             if (e.Property == TextBlock.TextProperty) assistanceHint.IsVisible = !string.IsNullOrWhiteSpace(assistanceHint.Text);
         };
-        var columns = new StackPanel { Spacing = 6, Children = {
-            Text("协助码", 12, true), assistanceRow,
-            modeRow, codeRow, customEditor
-        } };
-        assistanceCredentials = columns; columns.IsEnabled = allowAssistance;
-        assistanceSwitch.MinWidth = 0;
-        assistanceHint.FontSize = 12;
-        return new StackPanel { Spacing = 6, Children = { heading, columns, assistanceHint, reload } };
+        assistanceCredentials.IsEnabled = allowAssistance;
     }
     private void UpdateAssistanceState()
     {
-        if(assistanceCredentials is not null) assistanceCredentials.IsEnabled = allowAssistance;
+        assistanceCredentials.IsEnabled = allowAssistance;
         assistanceCode.Text = allowAssistance && assistanceDevice is { } device ? HostAssistance.DisplayCode(device) : "";
         if(!allowAssistance) assistanceCode.PasswordChar = '•';
         updateCodeModeUi?.Invoke();
@@ -204,7 +137,7 @@ public sealed partial class URemoteView
     {
         if(!allowAssistance || assistanceDevice is null || string.IsNullOrEmpty(value)) return;
         try { if(TopLevel.GetTopLevel(this)?.Clipboard is { } c) await c.SetTextAsync(value); }
-        catch { assistanceHint.Text = "复制失败，请手动选择并复制。"; }
+        catch { assistanceHint.Text = "复制失败，请手动选择并复制。"; ReportFailure(assistanceHint.Text, "复制协助码"); }
     }
     private async Task RefreshAssistanceAsync()
     {
@@ -222,6 +155,6 @@ public sealed partial class URemoteView
             UpdateAssistanceState();
         }
         catch(OperationCanceledException) when(lifetime.IsCancellationRequested) { }
-        catch { if(!disposed && !loggingOut && generation == accountGeneration) { assistanceDevice = null; assistanceId.Text = "未获取"; assistanceCode.Text = ""; assistanceHint.Text = "协助信息获取失败，请检查登录状态后重新获取。"; } }
+        catch { if(!disposed && !loggingOut && generation == accountGeneration) { assistanceDevice = null; assistanceId.Text = "未获取"; assistanceCode.Text = ""; assistanceHint.Text = "协助信息获取失败，请检查登录状态后重新获取。"; ReportFailure(assistanceHint.Text, "远程协助"); } }
     }
 }

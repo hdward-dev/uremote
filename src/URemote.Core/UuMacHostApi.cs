@@ -76,12 +76,12 @@ public sealed class UuMacHostApi : IDisposable
         return UuMacHostProtocol.ParseRoomResponse(response.RootElement.GetRawText());
     }
 
-    public async Task<HostRoomConfiguration> JoinDeviceAsync(string id, CancellationToken ct = default)
+    public async Task<HostRoomConfiguration> JoinDeviceAsync(string id, CancellationToken ct = default, bool forceJoin = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         if (!State.IsAuthenticated) throw new InvalidOperationException("Login required.");
         using var request = UuMacHostProtocol.BuildRequest(State, HttpMethod.Post,
-            "/api/v1/room/join/by_device/" + Uri.EscapeDataString(id), "{\"force_join\":false}");
+            "/api/v1/room/join/by_device/" + Uri.EscapeDataString(id), JsonSerializer.Serialize(new { force_join = forceJoin }));
         using var response = await SendAsync(request, ct);
         return UuMacHostProtocol.ParseRoomResponse(response.RootElement.GetRawText());
     }
@@ -221,7 +221,17 @@ public sealed class UuMacHostApi : IDisposable
     private async Task<JsonDocument> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         using var response = await http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) throw new HttpRequestException($"UU HTTP {(int)response.StatusCode}");
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = "";
+            try
+            {
+                using var error = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(ct));
+                detail = DescribeError(error.RootElement);
+            }
+            catch (JsonException) { }
+            throw new HttpRequestException($"UU HTTP {(int)response.StatusCode}" + detail, null, response.StatusCode);
+        }
         var bytes = await response.Content.ReadAsByteArrayAsync(ct);
         var document = JsonDocument.Parse(bytes);
         if (!document.RootElement.TryGetProperty("code", out var code) || code.GetInt32() != 0)
@@ -231,6 +241,21 @@ public sealed class UuMacHostApi : IDisposable
             throw new InvalidOperationException("UU rejected host request (code " + safeCode + ").");
         }
         return document;
+    }
+    private static string DescribeError(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return "";
+        var parts = new List<string>();
+        if (root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number)
+            parts.Add("code=" + code.GetRawText());
+        foreach (var name in new[] { "message", "msg", "detail" })
+            if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+            {
+                var text = new string((value.GetString() ?? "").Where(c => !char.IsControl(c)).Take(300).ToArray());
+                if (text.Length > 0) parts.Add(text);
+                break;
+            }
+        return parts.Count == 0 ? "" : " (" + string.Join("; ", parts) + ")";
     }
     public void Dispose() => http.Dispose();
 }

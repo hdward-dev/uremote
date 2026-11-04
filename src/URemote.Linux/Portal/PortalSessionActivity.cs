@@ -52,7 +52,7 @@ internal static class PortalSessionActivity
                     var now = state.Boolean();
                     Interlocked.Exchange(ref signaled, 1);
                     if (Interlocked.Exchange(ref active, now ? 1 : 0) == 1 && !now) writer.TryWrite("unblank");
-                    SessionLock.ObserveScreensaver(now);
+                    if (SessionLock.ObserveScreensaver(now)) report("session-lock-state;source=screensaver;locked=" + (now ? "1" : "0"));
                 }
                 catch { /* Ignore malformed screensaver signals. */ }
             });
@@ -90,12 +90,7 @@ internal static class PortalSessionActivity
             await using var bus = await PortalBus.ConnectSystemAsync(ct);
             var path = await SessionLock.LoginSessionPathAsync(bus, ct);
             var locked = -1; // -1 unknown, 0 clear, 1 locked
-            if (await SessionLock.TryReadLockedHintAsync(bus, path, ct) is bool initial)
-            {
-                locked = initial ? 1 : 0;
-                SessionLock.ObserveLoginHint(initial);
-            }
-            SessionLock.NoteProbeFinished(SessionLock.LoginProbe, report);
+            var signaled = 0;
             var properties = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.DBus.Properties", "PropertiesChanged", path, value =>
             {
                 try
@@ -108,28 +103,49 @@ internal static class PortalSessionActivity
                     if (hint is null) return;
                     using var boxed = hint.Type == "v" ? hint.Unbox() : null;
                     var now = (boxed ?? hint).Boolean();
+                    Interlocked.Exchange(ref signaled, 1);
                     if (Interlocked.Exchange(ref locked, now ? 1 : 0) == 1 && !now) writer.TryWrite("unlock");
-                    SessionLock.ObserveLoginHint(now);
+                    if (SessionLock.ObserveLoginHint(now)) report("session-lock-state;source=login1;locked=" + (now ? "1" : "0"));
                 }
                 catch { /* Ignore unrelated property changes. */ }
             });
             var unlock = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Session", "Unlock", path, _ =>
             {
                 writer.TryWrite("unlock");
+                Interlocked.Exchange(ref signaled, 1);
                 Interlocked.Exchange(ref locked, 0);
                 SessionLock.ObserveLoginHint(false);
             });
             var lockSignal = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Session", "Lock", path, _ =>
             {
+                Interlocked.Exchange(ref signaled, 1);
                 Interlocked.Exchange(ref locked, 1);
                 SessionLock.ObserveLoginHint(true);
             });
-            try { await Task.Delay(Timeout.Infinite, ct); }
+            var sleep = await bus.SubscribeAnyAsync("org.freedesktop.login1", "org.freedesktop.login1.Manager", "PrepareForSleep", "/org/freedesktop/login1", value =>
+            {
+                value.Require("(b)");
+                using var state = value.Child(0);
+                report("session-power-state=" + (state.Boolean() ? "suspending" : "resumed"));
+            });
+            try
+            {
+                if (await SessionLock.TryReadLockedHintAsync(bus, path, ct) is bool initial
+                    && Interlocked.CompareExchange(ref signaled, 1, 0) == 0)
+                {
+                    Interlocked.Exchange(ref locked, initial ? 1 : 0);
+                    SessionLock.ObserveLoginHint(initial);
+                }
+                SessionLock.NoteProbeFinished(SessionLock.LoginProbe, report);
+                report("session-activity-watch-ready;source=login1");
+                await Task.Delay(Timeout.Infinite, ct);
+            }
             finally
             {
                 try { await bus.UnsubscribeAsync(properties); } catch (IOException) { }
                 try { await bus.UnsubscribeAsync(unlock); } catch (IOException) { }
                 try { await bus.UnsubscribeAsync(lockSignal); } catch (IOException) { }
+                try { await bus.UnsubscribeAsync(sleep); } catch (IOException) { }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

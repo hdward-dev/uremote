@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="URemote.Module.RemoteToolsWindow"
+        x:CompileBindings="False"
+        Width="940" Height="650" MinWidth="620" MinHeight="420"
+        Background="{DynamicResource AppPageBrush}"
+        FontFamily="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Segoe UI">
+  <Grid Margin="18" RowDefinitions="Auto,*,Auto" RowSpacing="12">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <TextBlock x:Name="status" Text="正在连接…" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{DynamicResource AppStrongTextBrush}"/>
+      <Button x:Name="disconnect" Grid.Column="1" Content="断开" VerticalAlignment="Center"/>
+    </Grid>
+    <TextBox x:Name="transcript" Grid.Row="1" IsVisible="False" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+             FontFamily="Menlo, Consolas, monospace" Background="{DynamicResource AppChromeBrush}" BorderBrush="{DynamicResource AppBorderBrush}"/>
+    <Grid x:Name="filesBody" Grid.Row="1" IsVisible="False" RowDefinitions="Auto,Auto,*" RowSpacing="10">
+      <TextBox x:Name="path" Text=":/" MinWidth="160"/>
+      <StackPanel x:Name="fileActions" Grid.Row="1" Orientation="Horizontal" Spacing="8" IsEnabled="False">
+        <Button x:Name="parentDirectory" Content="返回"/>
+        <Button x:Name="refreshDirectory" Content="打开 / 刷新"/>
+        <Button x:Name="uploadFile" Content="上传文件"/>
+        <Button x:Name="downloadFile" Content="下载所选"/>
+      </StackPanel>
+      <ListBox x:Name="listing" Grid.Row="2"/>
+    </Grid>
+    <StackPanel x:Name="terminalFooter" Grid.Row="2" IsVisible="False" Spacing="8">
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+        <TextBox x:Name="command" PlaceholderText="输入命令，按 Enter 发送" IsEnabled="False"/>
+        <Button x:Name="sendCommand" Grid.Column="1" Content="发送"/>
+        <Button x:Name="interruptCommand" Grid.Column="2" Content="Ctrl+C"/>
+      </Grid>
+      <TextBlock Text="命令模式 · 支持命令输入与中断；暂不支持 vim 等全屏终端程序" FontSize="12" Classes="ad-muted"/>
+    </StackPanel>
+    <Button x:Name="cancelTransfer" Grid.Row="2" Content="取消传输" IsVisible="False" HorizontalAlignment="Left"/>
+  </Grid>
+</Window>

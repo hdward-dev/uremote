@@ -53,6 +53,47 @@ static class HostSessionTests
         sessions.Remove(retry.Peer!.Id);
         check(sessions.Peers.Count == 0 && sessions.Accept(request).Action == HostSignalAction.Requested,
             "failed media peer removal permits a fresh session without publisher restart");
+        sessions.Remove(sessions.Peers[0].Id);
+        var renewed = Frame("be-controlled", new JsonObject
+        {
+            ["client_id"] = "fixture-client", ["ice_id"] = "fixture-ice", ["app_control_id"] = "fresh-control",
+            ["app_data"] = new JsonObject { ["_placeholder"] = true, ["num"] = 0 }
+        }, [bytes]);
+        check(sessions.Accept(renewed).Peer!.Id.AppControlId == "fresh-control",
+            "a new app_control_id is accepted after the previous control session is removed");
+        var nested = Frame("be-controlled", new JsonObject
+        {
+            ["client_id"] = "fixture-client", ["ice_id"] = "nested-ice",
+            ["streamer_data"] = "{\"control_id\":\"from-streamer\"}",
+            ["app_data"] = new JsonObject { ["_placeholder"] = true, ["num"] = 0 }
+        }, [bytes]);
+        var nestedPeer = sessions.Accept(nested);
+        check(nestedPeer.Action == HostSignalAction.Requested && nestedPeer.Peer!.Id.AppControlId == "from-streamer",
+            "be-controlled recovers a missing app_control_id from streamer_data");
+        var numeric = Frame("be-controlled", new JsonObject
+        {
+            ["client_id"] = "fixture-client", ["ice_id"] = "numeric-ice", ["app_control_id"] = JsonValue.Create(4242),
+            ["app_data"] = new JsonObject { ["_placeholder"] = true, ["num"] = 0 }
+        }, [bytes]);
+        check(sessions.Accept(numeric).Peer!.Id.AppControlId == "4242", "numeric app_control_id is accepted");
+        var current = sessions.Peers.Single(p => p.Id.IceId == "numeric-ice");
+        check(!sessions.RemoveIfMatch(current.Id with { AppControlId = "replaced" }) && sessions.Peers.Any(p => p.Id.IceId == "numeric-ice"),
+            "removing a stale control id does not delete the replacement session");
+        check(sessions.RemoveIfMatch(current.Id) && sessions.Peers.All(p => p.Id.IceId != "numeric-ice"),
+            "the ended control id can still be removed");
+        try
+        {
+            sessions.Accept(Frame("be-controlled", new JsonObject
+            {
+                ["client_id"] = "fixture-client", ["ice_id"] = "missing-ice",
+                ["app_data"] = new JsonObject { ["_placeholder"] = true, ["num"] = 0 }
+            }, [bytes]));
+            check(false, "missing control id rejected");
+        }
+        catch (FormatException ex)
+        {
+            check(ex.Data["field"] as string == "app_control_id", "missing control id reports app_control_id");
+        }
     }
     private static UuSignalFrame Frame(string name, JsonObject data, byte[][]? binary = null) =>
         new(4, Packet: new(binary is null ? 2 : 5, Attachments: binary?.Length ?? 0, Data: new JsonArray(JsonValue.Create(name), data)), Attachments: binary ?? []);

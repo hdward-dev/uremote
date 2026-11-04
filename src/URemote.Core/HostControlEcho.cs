@@ -6,7 +6,7 @@ namespace URemote.Core;
 public static class HostControlEcho
 {
     // Protocol port from upstream controlChannelEncode/Decode; never echo arbitrary JSON or input.
-    public static byte[]? Reply(ReadOnlyMemory<byte> packet, ulong sequence, ulong timestamp, bool enableInput, bool enableClipboard = false, bool enableFiles = false)
+    public static byte[]? Reply(ReadOnlyMemory<byte> packet, ulong sequence, ulong timestamp, bool enableInput, bool enableClipboard = false, bool enableFiles = false, int captureSettingVersion = 0)
     {
         if (packet.Length > 8192 || (packet.Length > 0 && packet.Span[0] == (byte)'{')) return null;
         var envelope = ProtoFields.Read(packet);
@@ -33,8 +33,11 @@ public static class HostControlEcho
         Var(body, 8); Var(body, 1);
         Bytes(body, 2, Encoding.UTF8.GetBytes("{\"seq\":" + requestSequence + "}"));
         var flags = new List<byte>();
+        // Native FeatureFlag.ff_capture_setting (field 1) is a version:
+        // 3 includes chroma selection, 4 adds custom bitrate, 6 would promise HDR.
+        if (captureSettingVersion > 0) { Var(flags, 8); Var(flags, (ulong)captureSettingVersion); }
         if (enableInput) flags.AddRange([0x18, 2]);
-        if (enableClipboard) flags.AddRange([0x08, 2, 0x10, 2]);
+        if (enableClipboard) { if (captureSettingVersion == 0) flags.AddRange([0x08, 2]); flags.AddRange([0x10, 2]); }
         // Official 4.41 host advertises FTP list compression as FeatureFlag field 6 = 2.
         // Without this capability iOS opens the channel but never issues an FTP request.
         if (enableFiles) flags.AddRange([0x30, 2]);

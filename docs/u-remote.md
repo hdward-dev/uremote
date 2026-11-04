@@ -1,4 +1,4 @@
-# U远程 · 星栈远程控制插件
+# U远程原生轻应用
 
 ## 界面预览
 
@@ -11,18 +11,22 @@
 
 请先安装并启动 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock)，再从轻应用列表打开 U远程。本仓库提供插件，不提供独立桌面启动器。
 
+
+
 U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动网页或 GTK 窗口。
 模块入口为 `URemote.Module.URemoteApplicationModule`，清单 ID 为 `u-remote`。
-在星栈宿主中可打包到 `Apps/URemote`；本仓库直接构建模块输出，不包含星栈打包脚本。
+构建宿主会打包到 `Apps/URemote`；`scripts/package-apps.ps1` 会生成独立 appbundle。
 
 ## 当前能力
 
 - 右边栏新增“本地连接”：可切换 RDP / VNC，通过 IP 或主机名直接连接，无需 UU 登录。默认端口分别为 3389 / 5900，支持自定义端口、IPv6、RDP 用户名与域。密码不保存，连接后清空输入框。
-  画面在 U远程自己的 Avalonia 窗口中显示，支持等比缩放、全屏、键盘、鼠标、滚轮；Ctrl+Alt+Esc 释放键鼠，关闭窗口断开连接。同一协议、地址、端口和账号重复连接会激活已有窗口。
+  RDP 表单按“域、用户名”排序；本机保存最近 5 条成功连接，重复连接置顶，重启后保留。点击“快速连接”复用协议、地址、端口、域和用户名，仅需输入本次密码；已在连接中的会话直接激活，密码不写入历史文件。
+  画面在 U远程自己的 Avalonia 窗口中显示，支持等比缩放、全屏、键盘、鼠标、滚轮；Ctrl+Alt+Esc 释放键鼠，关闭窗口断开连接。同一协议、地址、端口和账号重复连接会激活已有窗口，已结束的会话可重新建立连接。
   VNC 支持 RFB 3.3 / 3.7 / 3.8、无认证及传统 VNC 密码认证、Raw / CopyRect / 桌面尺寸变化；暂不支持 VeNCrypt、Tight 认证、音频和剪贴板。传统 VNC 连接本身不加密，应在可信网络中使用。
   RDP 使用 FreeRDP 3 / WinPR 3 动态库及本仓库的 ABI 桥接组件，支持 NLA / TLS、软件解码和键鼠输入。未受信任或变化的证书会在应用中提示，仅明确确认后本次信任，不自动忽略证书。当前发行流程附带 Linux x64 / arm64 桥接组件，仍需系统安装 FreeRDP 3 运行库；其他平台需自行构建对应桥接组件。暂不提供 RDP 音频、剪贴板、文件重定向或动态分辨率。
 
-- 原生界面包含“我的设备”“本地连接”“本机被控”“远程协助”“文件传输”“账号与设置”，沿用 AsterDock 深浅主题；停止被控始终可见。
+- 模块版本 0.6.1。主界面、设备卡片、设备详情、本地连接历史、屏幕快照、远程协助、文件传输、账号与设置，以及远程桌面、本地桌面、远程工具和证书窗口都写在 `.axaml` 中。代码负责事件和编译绑定的数据。远控画面仍是窗口里的 `Image`。
+- 界面包含“我的设备”“本地连接”“本机被控”“远程协助”“文件传输”“账号与设置”，使用 `AsterDock.UI` 的 `App*` 画笔和 `ad-*` 样式，跟随星栈亮色/暗色主题和宿主强调色；停止被控始终可见。
 - 设备列表直接使用当前 UU 登录身份读取，支持名称/编号/平台搜索、在线/设备类型筛选、本机标记、本地收藏、详情及复制编号。
   设备页每 60 秒刷新，失败时保留上次结果；仅收藏编号存放于本机，不保存完整设备列表。在线且允许被控的其他电脑可点击“远程控制”，打开原生独立窗口；重复点击激活已有窗口。
 
@@ -32,19 +36,19 @@ U远程作为 Avalonia `IApplicationModule` 运行在 AsterDock 内，不启动�
 - 首次登录可在模块内输入手机号和短信验证码。只有点击发送按钮才发送短信，不自动重发。
   保存的登录令牌存放在私有身份文件（Linux 600 权限），只保存用于显示的脱敏手机号，不记录完整手机号和验证码。
 - “账号与设置”提供“退出登录”：先停止本机被控并关闭本应用的主控、终端和文件连接，再清除本机令牌和账号状态。当前平台的设备注册保留；旧平台身份退出后，下一次登录按当前平台重新初始化设备，并保留稳定的本机硬件标识。退出操作不自动发送短信。账号页以账号卡片显示登录状态和脱敏手机号；旧身份记录没有手机号时显示 UU 账号 ID。未登录时显示独立登录表单，高级设置默认折叠。
-- Linux/Wayland 按实际桌面能力选择后端：niri 使用 wlr-screencopy 和虚拟键鼠；KDE Plasma 使用桌面 Portal / PipeWire 采集与 Portal 键鼠控制。GNOME 等提供相同 Portal 接口的 Wayland 桌面可沿用该后端，仍需对应环境实测。主页底栏显示当前桌面环境及 Wayland / X11 会话类型；X11 被控尚未适配。
-- 壁纸预览支持 KDE 图片配置、主题默认壁纸和壁纸包的明暗版本（包括 SVG）；本机卡片直接生成预览，开启被控后沿用壁纸上传流程。验证码按钮显示 60 秒重发倒计时并在到期后恢复可用。
+- Linux 按会话选择后端：存在 `WAYLAND_DISPLAY` 或 `XDG_SESSION_TYPE=wayland` 时仍走 Wayland（niri 使用 wlr-screencopy 和虚拟键鼠；KDE Plasma 使用桌面 Portal / PipeWire 采集与 Portal 键鼠控制，锁屏刷新和 uinput 不变）。没有 Wayland 且设置了 `DISPLAY` 时使用 X11（RandR 显示器、MIT-SHM 采集、XDamage 变化检测、XTest 键鼠、CLIPBOARD 文本）。XFCE / xfwm4 这类没有 Portal 和 PipeWire 的会话走 X11。主页底栏显示当前桌面环境及 Wayland / X11 会话类型。
+- 壁纸预览按已经识别的桌面环境只查一个来源：KDE 仍读取 Plasma 图片配置、主题默认壁纸和壁纸包的明暗版本（包括 SVG）；XFCE 读取 xfce4-desktop；GNOME、Cinnamon、MATE 和 Unity 读取 gsettings；niri 仍用 DankMaterialShell。没有配置壁纸时卡片保持占位图，不截取桌面。桌面环境变量为空且会话是 X11 时，同一用户的 xfwm4、xfdesktop 或 xfce4-session 会把底栏识别成 XFCE。本机卡片直接生成预览，开启被控后沿用壁纸上传流程。验证码按钮显示 60 秒重发倒计时并在到期后恢复可用。
   Portal 后端在开启被控时由系统弹窗授权共享的显示器和键鼠权限，不保存授权令牌；取消授权不会上线，停止被控会关闭共享会话。最多选择 5 个显示器；重新开启时需重新授权，显示器列表以系统选择器授权结果为准。
-  两种后端共用持续 FFmpeg/libx264 编码，原始分辨率 / 默认目标 30 FPS（客户端可请求最高 60 FPS）。
+  各后端共用持续 FFmpeg/libx264 编码，原始分辨率。Wayland 与 X11 的每屏目标都是 min(显示器刷新率, 控制端请求)：画面变化时按目标发送，且不超过目标。Wayland 静止画面不超过 5 FPS；X11 静止画面可以更低。
   采用 CPU/SHM 管线，非 GPU 零拷贝；没有实现动态码率和即时关键帧反馈，丢包恢复依赖每秒关键帧。
 - 系统音频通过 PipeWire `pw-cat` 的输出监视器获取，48 kHz 双声道 / 20 ms Opus 帧，经 SRTP 发送。不采集麦克风。
-- 文本剪贴板使用 `wl-copy` / `wl-paste`，支持 V3 文本通知及 V4 格式读取响应；V3 文本使用 UTF-8，V4 Windows Unicode 格式使用以空字符结尾的 UTF-16LE。
+- Wayland 文本剪贴板使用 `wl-copy` / `wl-paste`，X11 使用 CLIPBOARD 选区（UTF8_STRING）。两者都支持 V3 文本通知及 V4 格式读取响应；V3 文本使用 UTF-8，V4 Windows Unicode 格式使用以空字符结尾的 UTF-16LE。
   当前上限 64 KiB，已加入 Windows Unicode 格式协商及 V4 分块接收；不支持文件/图片。Windows/iOS 官方客户端兼容性需实测。
 - 远程终端已接入官方 4.41.0 握手、环境检查、会话列表、新建/恢复、输入输出、窗口调整和关闭。
   使用当前用户的原生 Linux PTY；与键鼠共用本机允许开关。远端断开保留会话，本机停止被控或退出宿主清理会话。
   最多 8 个终端，每个仅在内存保留最多 64 KiB 输出供重连恢复；暂不支持终端重命名，同时只允许一个主控连接。
   本机加密完整回环、Ctrl+C、恢复 Shell 状态测试通过；官方客户端已由用户确认成功创建会话，`uname -a` 正确返回；Ctrl+C 和恢复会话仍待官方客户端实测。
-- 当前被控后端只支持 Linux/Wayland；Windows/Mac 的 AsterDock 可加载模块并显示平台说明。
+- 被控后端支持 Windows、Linux（Wayland 与 X11）和 macOS。Windows 使用 DXGI Desktop Duplication 采集、SendInput 键鼠、系统剪贴板和当前用户的 cmd 终端；本机预览用 GDI 截屏，避免 DXGI 首帧全黑。远程视频仍是 8 位 BGRA 经 H.264 发出，不携带 HDR。需要本机 PATH 或 `%LOCALAPPDATA%\AsterDock\tools\ffmpeg` 中的 ffmpeg。Windows 触控注入和系统声音尚未接入。
 
 ## 验证状态
 
@@ -76,6 +80,18 @@ KDE / GNOME 的 Portal 后端由 C# 直接通过稳定 C ABI 调用 GLib/GIO（D
 开发时可使用 `UREMOTE_IDENTITY`、`UREMOTE_FFMPEG`。`UREMOTE_NO_AUTO_START=1` 仅用于不联网的界面检查。
 请勿把实际身份文件、验证码、原始录屏、音频或剪贴板数据加入源码或 appbundle。
 
+## 真彩与 HDR
+
+Linux 被控端在 NVIDIA NVENC 的 H.264 4:4:4 编码探测通过后，上报真彩能力。主控开启真彩时切换为 High 4:4:4 Predictive、8 位 SDR，关闭后恢复 4:2:0；缩放和显示器切换保留当前色度设置，并分别遵守主控的解码尺寸上限。编码失败时恢复兼容的 4:2:0，不重建桌面共享授权。其他编码后端暂不上报真彩支持。
+
+Linux NVENC 使用 FFmpeg tee/framecrc 输出的包长读取完整编码帧，无需等待下一帧的 AUD 才开始发送。编码窗口按目标帧率和色度限制为 2–4 帧，以重叠拷贝和硬件编码；发送受阻时下一次从采集邮箱读取最新画面。Linux 会尝试扩大编码器自身的输入/输出管道，减少 4K 像素拷贝的进程唤醒，不修改系统管道上限；系统拒绝时沿用现有容量。
+
+发送使用跨帧平均码率预算和有限峰值节流，静止画面积累的额度最多为 500 ms。与本机网卡同子网的直连大帧可平滑突发，路由/中继路径使用较低峰值，明显丢包时临时恢复严格平均速率；不会把每一张大帧都按平均码率拉长。`video-pipeline-delay` 记录编码等待和发送时间，不含屏幕内容。`--video-latency-checks /path/to/ffmpeg` 使用合成 4K 图和发送停顿检查帧积压，附加 `--throughput` 测量编码吞吐量；这些数值不等同于真实桌面端到端帧率或延迟。
+
+真彩是 4:4:4 色度采样，与显示器的 HDR 开关独立。当前采集链路是 8 位 BGRA，尚不支持 10 位 HDR、PQ/HLG 与 HDR 元数据传递，因此不会向主控声明 HDR 支持。2026-11-04，在本机 KDE/Wayland、主屏 3840×2160 60Hz（显示器 HDR 开启）的环境下，经用户使用 iOS 官方客户端实测确认：普通模式和真彩模式均流畅、接近 60 FPS。此为本次设备组合的体验验证，不代表所有设备与网络下的帧率保证。
+
+`--video-timing-checks` 包含真彩请求、状态同步、每种色度的解码上限和回退检查。带可用 NVIDIA 驱动的环境可运行 `--video-true-color-checks /path/to/ffmpeg`，附加 `--video-nvenc4k-checks` 或 `--resize` 检查 4K/缩放输出；测试只使用合成图，核对码流中的真实色度和全部解码帧数。
+
 ## 构建与检查
 
 ```sh
@@ -98,7 +114,7 @@ dotnet run --project tests/URemote.Checks -- --desktop-portal-check
 
 ## 尚未完成
 
-主控声音/剪贴板、主控画质设置、设备管理全功能、文件传输兼容性完善、中文 IME、高分辨率/高帧率自适应、完善重连、多观看者、长期稳定性和其他桌面平台被控后端。
+主控声音/剪贴板、主控画质设置、设备管理全功能、文件传输、中文 IME、高分辨率/高帧率自适应、完善重连、多观看者、长期稳定性和其他桌面平台被控后端。
 
 ## 界面参考
 
@@ -157,9 +173,9 @@ services.udev.extraRules = ''
 
 ### 手机输入法提交文字
 
-支持控制通道的 `text_input` / `content` JSON 消息及 VINPUT 包装。此前只处理物理按键，手机输入法提交的整段文字会被忽略。现在在允许输入时把已提交的 Unicode 文本送到桌面，不修改剪贴板；输入内容不写入日志。
+支持控制通道的 `text_input` / `content` JSON 消息及 VINPUT 包装。此前只处理物理按键，手机输入法提交的整段文字会被忽略。现在在允许输入时把已提交的 Unicode 文本送到桌面；输入内容不写入日志。
 
-Niri/原生 Wayland 使用独立的单层 Unicode 虚拟键盘映射，每 240 个 Unicode 标量分段，支持中文和非 BMP 表情；普通按键和快捷键仍沿用原来的 uinput 后端。Portal 后端使用 `NotifyKeyboardKeysym`，尚待 KDE/GNOME 实机验证。拒绝超限、非法 Unicode 和除换行/制表外的控制字符。
+Niri/原生 Wayland 使用独立的单层 Unicode 虚拟键盘映射，每 240 个 Unicode 标量分段，支持中文和非 BMP 表情；普通按键和快捷键仍沿用原来的 uinput 后端。Portal 在已解锁且合成器提供 `EI_DEVICE_CAP_TEXT` 时走 EIS UTF-8。KDE 经常没有这项能力，而且锁屏会忽略 EIS；这时改用 KWin `org_kde_kwin_fake_input` 版本 6 的 `keyboard_keysym`（XKB Unicode 键符），锁屏键盘过滤仍会把它交给问候界面。没有键符接口时，未锁定会话再尝试虚拟键盘映射。剪贴板加 Ctrl+V 只在以上路径都不可用时使用，并在粘贴后恢复原来的剪贴板。`ConnectToEIS` 之后不能再调用 `NotifyKeyboardKeysym`。拒绝超限、非法 Unicode 和除换行/制表外的控制字符。
 
 2026-10-04 验证：Release 构建通过，188 项协议检查通过。在本机 Niri 的独立 Konsole 接收窗口中，通过生产解析及输入实现注入中文、英文、表情和跨分段长文本，收到的 798 字节与测试文本完全一致。手机端真实会话仍需复测。
 

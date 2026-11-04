@@ -1,0 +1,13 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:URemote.Module"
+             x:Class="URemote.Module.CatalogMessageCard"
+             x:DataType="local:CatalogMessageModel"
+             x:CompileBindings="True">
+  <Border Classes="ad-card" Padding="20">
+    <StackPanel Spacing="10" Margin="0,20">
+      <TextBlock Text="{Binding Title}" FontSize="18" Foreground="{DynamicResource AppStrongTextBrush}"/>
+      <TextBlock Text="{Binding Message}" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+    </StackPanel>
+  </Border>
+</UserControl>

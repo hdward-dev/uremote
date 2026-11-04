@@ -1,0 +1,17 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="URemote.Module.RdpCertificateWindow"
+        x:CompileBindings="False"
+        Title="确认 RDP 服务器证书" Width="560" Height="430" CanResize="True"
+        Background="{DynamicResource AppPageBrush}"
+        WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="*,Auto">
+    <ScrollViewer>
+      <TextBlock x:Name="message" Margin="24,24,24,0" TextWrapping="Wrap" Foreground="{DynamicResource AppStrongTextBrush}"/>
+    </ScrollViewer>
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="24">
+      <Button Content="取消连接" Click="Reject_Click"/>
+      <Button Classes="ad-primary" Content="仅本次信任并连接" Click="Accept_Click"/>
+    </StackPanel>
+  </Grid>
+</Window>

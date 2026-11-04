@@ -61,9 +61,11 @@ public sealed class ControllerMediaPeer : IDisposable
         peer.OnVideoFrameReceivedByIndex += (index, endpoint, stamp, bytes, format) => { if (bytes.Length <= 16_000_000 && disposed == 0) Video?.Invoke(index, bytes); };
         if (!dataOnly)
         {
+        // Official desktop offers put recvonly audio first, then one video m-line per screen.
+        // Hosts bind screen N to the Nth video track; leading with video shifts that mapping.
+        peer.addTrack(new MediaStreamTrack(new List<AudioFormat> { new(AudioCodecsEnum.OPUS, 111, 48000, 2) }, MediaStreamStatusEnum.RecvOnly));
         for (int i = 0; i < 5; i++) peer.addTrack(new MediaStreamTrack(new List<VideoFormat> {
             new(VideoCodecsEnum.H264, 98, 90000, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e033") }, MediaStreamStatusEnum.RecvOnly));
-        peer.addTrack(new MediaStreamTrack(new List<AudioFormat> { new(AudioCodecsEnum.OPUS, 111, 48000, 2) }, MediaStreamStatusEnum.RecvOnly));
         }
         peer.ondatachannel += Attach;
     }
@@ -163,7 +165,9 @@ public sealed class ControllerMediaPeer : IDisposable
         // The SendToRom protobuf envelope is used by mobile/legacy hosts.
         lock (sendGate)
         {
-            if (!CanControl || System.Text.Encoding.UTF8.GetByteCount(json) > 4096) return false;
+            if (!CanControl) return false;
+            json = ControllerProtocol.RouteInput(json, display);
+            if (System.Text.Encoding.UTF8.GetByteCount(json) > 4096) return false;
             try { control!.send(json); return true; } catch { return false; }
         }
     }

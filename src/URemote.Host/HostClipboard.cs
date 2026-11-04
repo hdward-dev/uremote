@@ -22,8 +22,20 @@ internal sealed class HostClipboard : IAsyncDisposable
     public HostClipboard(HostMediaPeer peer, Action<string> report) : this(peer.SendData, report) { }
     public HostClipboard(Func<string, byte[], bool> send, Action<string> report)
     {
-        var clipboard = new WaylandClipboard(); clipboardOwner = clipboard;
-        this.send = send; this.report = report; read = clipboard.ReadAsync; write = clipboard.WriteAsync;
+        if (OperatingSystem.IsWindows())
+        {
+            var clipboard = new WindowsClipboard(); clipboardOwner = clipboard;
+            this.send = send; this.report = report; read = clipboard.ReadAsync; write = clipboard.WriteAsync;
+            return;
+        }
+        if (LinuxSessionKind.UseX11())
+        {
+            var x11Clipboard = new X11Clipboard(); clipboardOwner = x11Clipboard;
+            this.send = send; this.report = report; read = x11Clipboard.ReadAsync; write = x11Clipboard.WriteAsync;
+            return;
+        }
+        var wayland = new WaylandClipboard(); clipboardOwner = wayland;
+        this.send = send; this.report = report; read = wayland.ReadAsync; write = wayland.WriteAsync;
     }
     internal HostClipboard(Func<string, byte[], bool> send, Action<string> report,
         Func<CancellationToken, Task<string?>> read, Func<string, CancellationToken, Task> write)
@@ -72,6 +84,7 @@ internal sealed class HostClipboard : IAsyncDisposable
     public async Task WatchAsync(CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(750));
+        var unavailableReported = false;
         while (await timer.WaitForNextTickAsync(ct))
         {
             await gate.WaitAsync(ct);
@@ -79,6 +92,7 @@ internal sealed class HostClipboard : IAsyncDisposable
             {
                 if (pendingTextId != 0 && DateTimeOffset.UtcNow >= textAckDeadline) AdvertiseFormats();
                 var text = await read(ct);
+                unavailableReported = false;
                 if (text is null || text == lastText) continue;
                 var id = (ulong)Interlocked.Increment(ref sequence);
                 var packet = HostClipboardProtocol.Change(id, text);
@@ -91,7 +105,7 @@ internal sealed class HostClipboard : IAsyncDisposable
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
             catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception or System.Text.DecoderFallbackException)
-            { report("clipboard-unavailable"); return; }
+            { if (!unavailableReported) report("clipboard-unavailable"); unavailableReported = true; }
             finally { gate.Release(); }
         }
     }

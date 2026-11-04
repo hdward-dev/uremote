@@ -1,5 +1,8 @@
 using Avalonia;
+using Avalonia.Threading;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Controls.Presenters;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -12,9 +15,8 @@ namespace URemote.Module;
 
 public sealed partial class URemoteView
 {
-    private readonly WrapPanel localScreens = new() { Orientation = Orientation.Horizontal };
     private readonly List<WriteableBitmap> localBitmaps = [];
-    private readonly Dictionary<int, TextBlock> localScreenLabels = [];
+    private readonly Dictionary<int, LocalScreenModel> localScreenLabels = [];
     private readonly Dictionary<int, string> localScreenFps = [];
     private bool loadingScreens;
     private async Task RefreshAuthorizedScreensAsync()
@@ -25,14 +27,8 @@ public sealed partial class URemoteView
             if (disposed) return;
             var current = globals.Where(g => g.Interface == "wl_output").Select(g => g.Name).Order().Take(5).ToArray();
             if (!outputs.Select(o => o.Id).SequenceEqual(current))
-            {
-                outputs.Clear(); screens.Children.Clear();
-                foreach (var id in current)
-                {
-                    var check = new CheckBox { Content = "显示屏 " + (outputs.Count + 1), IsChecked = true, Margin = new Thickness(0, 0, 16, 8) };
-                    outputs.Add((id, check)); screens.Children.Add(check);
-                }
-            }
+                ReplaceScreens(await DesktopBackend.ReadOutputsAsync(lifetime.Token), null);
+            SaveSettings();
             await RefreshLocalScreensAsync();
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
@@ -41,6 +37,20 @@ public sealed partial class URemoteView
     private readonly Dictionary<string, Bitmap> previewCache = [];
     private DateTimeOffset localWallpaperChecked;
     private readonly HttpClient previewHttp = new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(12) };
+
+    // Avalonia bitmaps and controls are owned by the UI thread. Decoding and property changes off that thread surface as "a different thread owns it".
+    private static Task<T> OnUiAsync<T>(Func<T> action)
+    {
+        if (Dispatcher.UIThread.CheckAccess()) return Task.FromResult(action());
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(() =>
+        {
+            try { done.TrySetResult(action()); }
+            catch (Exception e) { done.TrySetException(e); }
+        });
+        return done.Task;
+    }
+    private static Task OnUiAsync(Action action) => OnUiAsync(() => { action(); return true; });
 
     private async Task RefreshPreviewsAsync()
     {
@@ -57,14 +67,21 @@ public sealed partial class URemoteView
             try
             {
                 var png = await LinuxWallpaper.RenderAsync(appliedEncoder, lifetime.Token);
-                if (png is not null && !disposed && !loggingOut && generation == accountGeneration)
+                if (disposed || loggingOut || generation != accountGeneration) return;
+                var bytes = png;
+                await OnUiAsync(() =>
                 {
-                    using var stream = new MemoryStream(png);
-                    var bitmap = Bitmap.DecodeToWidth(stream, 800);
+                    if (disposed || loggingOut || generation != accountGeneration) return;
+                    if (bytes is null)
+                    {
+                        if (previewCache.Remove(localWallpaperKey, out var stale)) { stale.Dispose(); RenderDevices(); }
+                        return;
+                    }
                     if (previewCache.Remove(localWallpaperKey, out var old)) old.Dispose();
-                    previewCache[localWallpaperKey] = bitmap;
+                    using var stream = new MemoryStream(bytes);
+                    previewCache[localWallpaperKey] = Bitmap.DecodeToWidth(stream, 800);
                     RenderDevices();
-                }
+                });
             }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
             catch { /* Wallpaper availability must not affect the device list. */ }
@@ -86,11 +103,14 @@ public sealed partial class URemoteView
                     if (bytes.Length + read > 5_000_000) throw new IOException("Preview too large.");
                     bytes.Write(chunk, 0, read);
                 }
-                bytes.Position = 0;
-                var bitmap = Bitmap.DecodeToWidth(bytes, 800);
-                if (disposed || loggingOut || generation != accountGeneration) { bitmap.Dispose(); return; }
-                previewCache.Add(url, bitmap);
-                RenderDevices();
+                var copy = bytes.ToArray();
+                await OnUiAsync(() =>
+                {
+                    if (disposed || loggingOut || generation != accountGeneration || previewCache.ContainsKey(url)) return;
+                    using var image = new MemoryStream(copy);
+                    previewCache.Add(url, Bitmap.DecodeToWidth(image, 800));
+                    RenderDevices();
+                });
             }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
             catch { /* A missing thumbnail must never prevent remote control. */ }
@@ -103,48 +123,76 @@ public sealed partial class URemoteView
         loadingScreens = true;
         try
         {
-            localScreens.Children.Clear(); localScreenLabels.Clear();
-            foreach (var old in localBitmaps) old.Dispose(); localBitmaps.Clear();
-            foreach (var (id, check) in outputs.Take(5).ToArray())
+            var shares = outputs.Take(5).ToArray();
+            var built = new List<(int Index, string Caption, byte[]? Pixels, string? Error)>();
+            foreach (var share in shares)
             {
-                var image = new Image { Width = 112, Height = 63, Stretch = Stretch.Uniform };
-                var screenIndex = outputs.FindIndex(x => x.Id == id) + 1;
-                var label = Text($"显示屏 {screenIndex}" + (localScreenFps.TryGetValue(screenIndex, out var fps) ? $" · FPS {fps}" : ""), 11, true);
-                localScreenLabels[screenIndex] = label;
-                var tile = new Button { Content = new StackPanel { Spacing = 3, Children = { image, label } },
-                    Padding = new Thickness(4), Margin = new Thickness(0, 0, 6, 2) };
-                tile.Click += (_, _) => ShowPage(1); ToolTip.SetTip(tile, "本机屏幕快照 · 点击修改共享设置"); localScreens.Children.Add(tile);
-                if (!hostEnabled || Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") == "1") continue;
+                var screenIndex = outputs.Select((item, index) => (item, index)).First(x => x.item.Id == share.Id).index + 1;
+                var caption = $"显示屏 {screenIndex}" + (localScreenFps.TryGetValue(screenIndex, out var fps) ? $" · FPS {fps}" : "");
+                if (!hostEnabled || Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") == "1")
+                {
+                    built.Add((screenIndex, caption, null, null));
+                    continue;
+                }
                 CapturedScreen? frame = null;
                 try
                 {
-                    frame = await DesktopBackend.CaptureAsync(id, false, lifetime.Token);
+                    frame = await DesktopBackend.CaptureAsync(share.Id, false, lifetime.Token);
                     if (disposed) return;
-                    if (frame.ShmFormat is not (0 or 1)) continue;
-                    var bitmap = new WriteableBitmap(new PixelSize(224, 126), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
-                    using (var target = bitmap.Lock())
-                    {
-                        var row = new byte[224 * 4];
-                        for (var y = 0; y < 126; y++)
-                        {
-                            var sy = y * (int)frame.Height / 126;
-                            if (frame.YInverted) sy = (int)frame.Height - 1 - sy;
-                            for (var x = 0; x < 224; x++)
-                            {
-                                var at = sy * (int)frame.Stride + x * (int)frame.Width / 224 * 4;
-                                Array.Copy(frame.Pixels, at, row, x * 4, 4); row[x * 4 + 3] = 255;
-                            }
-                            Marshal.Copy(row, 0, target.Address + y * target.RowBytes, row.Length);
-                        }
-                    }
-                    localBitmaps.Add(bitmap); image.Source = bitmap;
+                    var pixels = frame.ShmFormat is 0 or 1 ? ScalePreview(frame, 224, 126) : null;
+                    built.Add((screenIndex, caption, pixels, null));
                 }
                 catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
-                catch { image.IsVisible = false; }
+                catch (Exception e) { built.Add((screenIndex, caption, null, e.GetType().Name)); }
                 finally { if (frame is not null) Array.Clear(frame.Pixels); }
             }
+            await OnUiAsync(() =>
+            {
+                if (disposed) return;
+                localScreenItems.Clear(); localScreenLabels.Clear();
+                foreach (var old in localBitmaps) old.Dispose();
+                localBitmaps.Clear();
+                foreach (var item in built)
+                {
+                    var tile = new LocalScreenModel {
+                        Caption = item.Error is null ? item.Caption : $"显示屏 {item.Index} · {item.Error}",
+                        ShowSnapshot = item.Pixels is not null,
+                        OpenSettings = new AsyncCommand(() => { ShowPage(1); return Task.CompletedTask; }) };
+                    if (item.Pixels is { } pixels)
+                    {
+                        var image = new WriteableBitmap(new PixelSize(224, 126), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+                        using (var target = image.Lock())
+                        {
+                            for (var y = 0; y < 126; y++)
+                                Marshal.Copy(pixels, y * 224 * 4, target.Address + y * target.RowBytes, 224 * 4);
+                        }
+                        localBitmaps.Add(image);
+                        tile.Snapshot = image;
+                    }
+                    localScreenLabels[item.Index] = tile;
+                    localScreenItems.Add(tile);
+                }
+            });
         }
         finally { loadingScreens = false; }
+    }
+
+    private static byte[] ScalePreview(CapturedScreen frame, int width, int height)
+    {
+        var pixels = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        {
+            var sy = y * (int)frame.Height / height;
+            if (frame.YInverted) sy = (int)frame.Height - 1 - sy;
+            for (var x = 0; x < width; x++)
+            {
+                var at = sy * (int)frame.Stride + x * (int)frame.Width / width * 4;
+                var to = (y * width + x) * 4;
+                if ((uint)at > frame.Pixels.Length - 4) continue;
+                pixels[to] = frame.Pixels[at]; pixels[to + 1] = frame.Pixels[at + 1]; pixels[to + 2] = frame.Pixels[at + 2]; pixels[to + 3] = 255;
+            }
+        }
+        return pixels;
     }
 
     private void UpdateScreenFps(string value)
@@ -152,52 +200,22 @@ public sealed partial class URemoteView
         var fields = value.Split(';').Select(x => x.Split('=', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1]);
         if (!fields.TryGetValue("screen", out var screen) || !int.TryParse(screen, out var index)
             || !fields.TryGetValue("fps", out var fps)) return;
-        var shared = outputs.Select((o, i) => (o, i)).Where(x => x.o.Check.IsChecked == true).Select(x => x.i + 1).ToArray();
+        var shared = outputs.Select((o, i) => (o, i)).Where(x => x.o.IsChecked == true).Select(x => x.i + 1).ToArray();
         if (index > 0 && index <= shared.Length) index = shared[index - 1];
         localScreenFps[index] = fps;
-        if (localScreenLabels.TryGetValue(index, out var label)) label.Text = $"显示屏 {index} · FPS {fps}";
+        var caption = $"显示屏 {index} · FPS {fps}";
+        if (localScreenLabels.TryGetValue(index, out var label))
+            Dispatcher.UIThread.Post(() => { if (!disposed) label.Caption = caption; });
     }
 
     private void ClearScreenFps()
     {
         localScreenFps.Clear();
-        foreach (var (index, label) in localScreenLabels) label.Text = $"显示屏 {index}";
-    }
-
-    private DeviceCard BuildPreviewCard(UuDevice device)
-    {
-        var allowed = !device.IsCurrent && device.Online && device.Controllable && device.ControlledSupport && device.Category == "desktop";
-        var wallpaperKey = device.IsCurrent && previewCache.ContainsKey("local-wallpaper") ? "local-wallpaper" : device.WallpaperUrl;
-        previewCache.TryGetValue(wallpaperKey, out var wallpaper);
-        return new DeviceCard { DataContext = new DeviceCardModel {
-            Name = device.Name,
-            StatusText = "●  " + device.StatusName,
-            PlatformName = device.PlatformName,
-            BadgeText = device.IsCurrent ? "本机" : device.StatusName,
-            FavoriteLabel = favorites.Contains(device.Id) ? "取消收藏" : "收藏设备",
-            Online = device.Online,
-            HasWallpaper = wallpaper is not null,
-            Wallpaper = wallpaper,
-            WallpaperOpacity = device.Online ? 1 : .5,
-            IsMobile = device.Category == "mobile",
-            ShowBadge = device.IsCurrent || !device.Online,
-            CanControl = allowed,
-            ListView = listView,
-            PreviewHeight = listView ? 120 : 190,
-            IsSelected = selectedDeviceId == device.Id,
-            ConnectTip = allowed ? "点击预览进入远程控制" : null,
-            ConnectName = allowed ? "远程控制 " + device.Name : "",
-            TransferTip = allowed ? "在独立窗口中浏览、上传和下载远端文件" : "设备需在线并允许被控",
-            TerminalTip = allowed ? "打开远程终端命令窗口" : "设备需在线并允许被控",
-            TransferName = "文件传输 " + device.Name,
-            TerminalName = "终端 " + device.Name,
-            PortName = "端口映射 " + device.Name,
-            WakeName = "远程开机 " + device.Name,
-            RequestRemote = () => OpenRemote(device),
-            RequestFiles = () => OpenTool(device, false),
-            RequestTerminal = () => OpenTool(device, true),
-            RequestFavorite = () => { if (!favorites.Add(device.Id)) favorites.Remove(device.Id); SaveFavorites(); RenderDevices(); },
-            RequestDetails = () => { ShowDevice(device); RenderDevices(); }
-        } };
+        var labels = localScreenLabels.ToArray();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (disposed) return;
+            foreach (var (index, label) in labels) label.Caption = $"显示屏 {index}";
+        });
     }
 }

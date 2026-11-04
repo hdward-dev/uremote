@@ -10,6 +10,7 @@ public static class DesktopActions
         if (action is not (HostDesktopAction.ShowDesktop or HostDesktopAction.ShowWindows)) return false;
         try
         {
+            if (OperatingSystem.IsWindows()) return await WindowsDesktop.ApplyDesktopActionAsync(action, ct);
             if (OperatingSystem.IsMacOS()) return await MacDesktop.ApplyDesktopActionAsync(action, ct);
             var desktop = DesktopEnvironmentInfo.Current.Name;
             if (desktop == "KDE Plasma")

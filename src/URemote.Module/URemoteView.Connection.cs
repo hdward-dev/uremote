@@ -8,34 +8,11 @@ namespace URemote.Module;
 
 public sealed partial class URemoteView
 {
-    private readonly StackPanel controlConnectionPanel = new() { Spacing = 8, IsVisible = false };
-    private readonly TextBlock connectionDevice = new() { FontSize = 16, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock connectionDetails = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock connectionLocation = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock connectionDuration = new() { FontSize = 20, FontWeight = FontWeight.SemiBold };
-    private readonly TextBlock connectionStarted = new() { FontSize = 12 };
     private readonly DispatcherTimer connectionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private readonly Button disconnectControl = new() { Content = "断开控制", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
     private HostControlConnection? currentControlConnection;
 
-    private Control BuildConnectionCard()
+    private void WireConnectionCard()
     {
-        var heading = Text("●  当前控制连接", 16);
-        ApplyTheme(heading, TextBlock.ForegroundProperty, "AppPositiveBrush");
-        foreach (var item in new[] { connectionDetails, connectionLocation, connectionStarted })
-            ApplyTheme(item, TextBlock.ForegroundProperty, "AppMutedBrush");
-        controlConnectionPanel.Children.Add(new Separator());
-        controlConnectionPanel.Children.Add(heading);
-        var durationRow = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 8 };
-        var durationLabel = Text("已连接时长", 12, true);
-        durationLabel.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
-        connectionDuration.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right;
-        durationRow.Children.Add(durationLabel);
-        Grid.SetColumn(connectionDuration, 1); durationRow.Children.Add(connectionDuration);
-        controlConnectionPanel.Children.Add(Card(new StackPanel { Spacing = 6, Children = {
-            connectionDevice, connectionDetails, connectionLocation,
-            durationRow, connectionStarted, disconnectControl
-        } }, 10));
         disconnectControl.Click += (_, _) =>
         {
             if (!disconnectControl.IsEnabled || currentControlConnection?.RequestDisconnect is not { } disconnect) return;
@@ -44,7 +21,6 @@ public sealed partial class URemoteView
             disconnect();
         };
         connectionTimer.Tick += (_, _) => { if (currentControlConnection is { } connection) connectionDuration.Text = connection.ElapsedText; };
-        return controlConnectionPanel;
     }
 
     private void UpdateHostBadge()

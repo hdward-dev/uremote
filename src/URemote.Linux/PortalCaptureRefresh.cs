@@ -25,15 +25,40 @@ internal static class PortalStreamMap
             if (old.Node == 0) continue;
             var match = next.FirstOrDefault(box => box.Node != 0 && !used.Contains(box.Node)
                 && old.Width > 0 && old.Height > 0 && box.Width == old.Width && box.Height == old.Height && box.X == old.X && box.Y == old.Y);
+            // Logical size can change across a portal restore while the panel stays put.
+            // Pair that panel by position before falling back to order, or the left screen
+            // becomes the right screen's PipeWire node.
+            if (match.Node == 0)
+                match = next.FirstOrDefault(box => box.Node != 0 && !used.Contains(box.Node)
+                    && box.X == old.X && box.Y == old.Y && (old.X != 0 || old.Y != 0 || old.Width > 0));
             if (match.Node == 0 && next.Count == previous.Count)
             {
-                var byIndex = next[i];
-                if (byIndex.Node != 0 && !used.Contains(byIndex.Node)) match = byIndex;
+                var distinct = previous.Select(box => (box.X, box.Y)).Distinct().Count() > 1
+                    && next.Select(box => (box.X, box.Y)).Distinct().Count() > 1;
+                var byOrder = distinct
+                    ? Ranked(next, Rank(previous, old.Node))
+                    : next[i];
+                if (byOrder.Node != 0 && !used.Contains(byOrder.Node)) match = byOrder;
             }
             if (match.Node == 0 || !used.Add(match.Node)) continue;
             map[old.Node] = match.Node;
         }
         return map;
+    }
+
+    private static int Rank(IReadOnlyList<PortalStreamBox> layout, uint node)
+    {
+        var ordered = layout.OrderBy(box => box.X).ThenBy(box => box.Y).ThenBy(box => box.Node).ToArray();
+        for (var i = 0; i < ordered.Length; i++)
+            if (ordered[i].Node == node) return i;
+        return -1;
+    }
+
+    private static PortalStreamBox Ranked(IReadOnlyList<PortalStreamBox> layout, int rank)
+    {
+        if (rank < 0) return default;
+        var ordered = layout.OrderBy(box => box.X).ThenBy(box => box.Y).ThenBy(box => box.Node).ToArray();
+        return rank < ordered.Length ? ordered[rank] : default;
     }
 }
 

@@ -1,5 +1,7 @@
 namespace URemote.Core;
 
+public readonly record struct RemoteScreen(int Id, int VideoTrack);
+
 // Screen-list protobuf shape observed in authorized official host signal_app_data captures.
 // Uses physical screen dimensions; iOS switches sources on the primary video track.
 public static class HostDisplayInfo
@@ -29,6 +31,27 @@ public static class HostDisplayInfo
         Int(list, 2, 0);
         var envelope = new List<byte>(); Int(envelope, 1, sequence); Int(envelope, 2, timestamp); Blob(envelope, 7, list.ToArray());
         return envelope.ToArray();
+    }
+    // Field 1 is the physical screen. Field 12 is the video track that carries it.
+    // A shared track (iOS and some desktop hosts) means selection changes the source, not the track.
+    public static IReadOnlyList<RemoteScreen> Read(ReadOnlyMemory<byte> bytes)
+    {
+        if (bytes.Length is 0 or > 8192) return [];
+        var root = ProtoFields.Read(bytes);
+        if (root.Bytes(7) is not { } list) return [];
+        var screens = ProtoFields.Read(list, [1]);
+        var result = new List<RemoteScreen>();
+        foreach (var item in screens.Repeated(1))
+        {
+            if (result.Count == 5) break;
+            var screen = ProtoFields.Read(item);
+            var id = screen.Int(1);
+            var hasTrack = screen.Items.Any(field => field.Tag == 12 && field.WireType == 0);
+            var track = hasTrack ? screen.Int(12) : id;
+            if (id is < 0 or > 4 || track is < 0 or > 4 || result.Any(existing => existing.Id == id)) continue;
+            result.Add(new(id, track));
+        }
+        return result;
     }
     private static void Int(List<byte> b, uint tag, ulong value) { Var(b, tag << 3); Var(b, value); }
     private static void Blob(List<byte> b, uint tag, byte[] value) { Var(b, (tag << 3) | 2); Var(b, (ulong)value.Length); b.AddRange(value); }

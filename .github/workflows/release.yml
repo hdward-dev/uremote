@@ -64,6 +64,8 @@ jobs:
       - run: dotnet restore URemote.slnx
       - run: dotnet build URemote.slnx -c Release --no-restore -m:1
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
+      - name: Check capture settings, true color and packet pacing
+        run: dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-timing-checks
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check
       - name: Package and validate plugin
@@ -76,7 +78,7 @@ jobs:
           U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
           星栈下载：https://github.com/hdward-dev/asterdock/releases
 
-          本次更新同步星栈主线的 U远程修复。Plasma 锁屏或持续黑帧后会重新建立 Portal 采集，并在取消授权时保留恢复令牌。设备卡片保留表面背景、边框和圆角，并按窗口宽度在 380–640 像素之间换行。设备列表改为在线优先，离线的本机不再排在其他在线设备前面。远控独立窗口可调节画质（流畅、高清、超清、原画、自动），对应 HostVideoSettings 1–5，调节画质不会改变分辨率或强制帧率。
+          本次更新同步星栈主线 4320b01：Linux NVIDIA 硬件编码、4:4:4 真彩、低延迟发包、帧率与解码尺寸协商，以及锁屏、多屏、输入和传输修复。iOS 主控连接本机 KDE/Wayland 的普通与真彩模式均已实测流畅、接近 60 FPS；实际帧率仍受显示器刷新率、设备和网络限制。真彩为 8 位 SDR，尚不支持 HDR 视频传输。
           macOS 系统音频、触控和被控终端尚未支持；GNOME 桌面快捷操作仍需实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES

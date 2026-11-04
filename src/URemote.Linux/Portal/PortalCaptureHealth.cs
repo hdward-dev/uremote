@@ -8,7 +8,10 @@ public static class PortalCaptureHealth
     public static bool IsLowBitrate(double fps, double encodedMbps) => fps >= 20 && encodedMbps < LowMbps;
     // One window is at least two seconds and 120 frames. Two low windows is the stale streak.
     public static bool WindowIsStale(int frames, TimeSpan elapsed, long bytes)
+        => WindowIsStale(frames, elapsed, bytes, null);
+    public static bool WindowIsStale(int frames, TimeSpan elapsed, long bytes, bool? locked)
     {
+        if (locked == true) return false;
         if (frames < 120 || elapsed < TimeSpan.FromSeconds(2) || elapsed <= TimeSpan.Zero) return false;
         var fps = frames / elapsed.TotalSeconds;
         var mbps = bytes * 8d / elapsed.TotalSeconds / 1_000_000d;
@@ -16,6 +19,7 @@ public static class PortalCaptureHealth
     }
     public static bool StreakTriggers(int consecutiveLowWindows) => consecutiveLowWindows >= 2;
     public static bool BlackStreak(int frames, TimeSpan elapsed) => frames >= 30 && elapsed >= TimeSpan.FromSeconds(4);
+    public static bool BlackStreak(int frames, TimeSpan elapsed, bool? locked) => locked != true && BlackStreak(frames, elapsed);
     // Mean luma of a subsample. Blank/lock frames are near zero; a dark but real desktop is not.
     public static bool NearBlack(ReadOnlySpan<byte> bgra)
     {

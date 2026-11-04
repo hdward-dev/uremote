@@ -4,6 +4,6 @@
     <RootNamespace>AsterDock.Contracts</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia" Version="12.1.2" />
   </ItemGroup>
 </Project>

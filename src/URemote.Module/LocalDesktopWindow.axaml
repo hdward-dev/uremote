@@ -1,0 +1,27 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:AsterDock.UI.Controls"
+        x:Class="URemote.Module.LocalDesktopWindow"
+        x:CompileBindings="False"
+        Width="1280" Height="800" MinWidth="640" MinHeight="440"
+        Background="{DynamicResource AppPageBrush}"
+        FontFamily="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Segoe UI">
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Background="{DynamicResource AppChromeBrush}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid Margin="16,10" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+        <TextBlock x:Name="status" Text="准备连接" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource AppStrongTextBrush}"/>
+        <Button x:Name="fullScreen" Grid.Column="1" Content="全屏" VerticalAlignment="Center"/>
+        <Button x:Name="disconnect" Grid.Column="2" Content="断开连接" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
+    <ui:AdLoadingOverlay x:Name="connectingOverlay" Grid.Row="1" IsLoading="True" Text="正在连接…"
+                         IndicatorSize="Large" UseBlur="False" FollowContentCornerRadius="False">
+      <Border Background="Black">
+        <Image x:Name="desktop" Stretch="Uniform" Focusable="True"/>
+      </Border>
+    </ui:AdLoadingOverlay>
+    <Border Grid.Row="2" Background="{DynamicResource AppChromeBrush}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0">
+      <TextBlock Text="点击画面控制 · Ctrl + Alt + Esc 释放键鼠 · 关闭窗口断开连接" Classes="ad-muted" Margin="16,8" FontSize="12"/>
+    </Border>
+  </Grid>
+</Window>

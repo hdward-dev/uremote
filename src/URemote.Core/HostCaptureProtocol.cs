@@ -1,5 +1,5 @@
 namespace URemote.Core;
-public sealed record CaptureUpdate(int Screen, int Width, int Height, int Fps, int Quality, ulong Sequence, int Flag, ulong? RpcId, int CustomBitrate = 0, int AutoQuality = 0);
+public sealed record CaptureUpdate(int Screen, int Width, int Height, int Fps, int Quality, ulong Sequence, int Flag, ulong? RpcId, int CustomBitrate = 0, int AutoQuality = 0, int MaxScaleWidth = 0, int MaxScaleHeight = 0, int ChromaFormat = 0, bool EnableHdr = false);
 public static class HostCaptureProtocol
 {
     // Restrict diagnostics to numeric capture settings; never log arbitrary channel payloads.
@@ -34,7 +34,7 @@ public static class HostCaptureProtocol
         if (rpc.Bytes(2) is { } capture)
         {
             var p = ProtoFields.Read(capture);
-            return new(p.Int(4), p.Int(5), p.Int(6), p.Int(1) is >= 1 and <= 4 ? Fps(p.Int(1)) : p.Int(18) > 0 ? p.Int(18) : Fps(p.Int(1)), p.Int(2), seq, 0, id, p.Int(8), p.Int(12));
+            return new(p.Int(4), p.Int(5), p.Int(6), p.Int(1) is >= 1 and <= 4 ? Fps(p.Int(1)) : p.Int(18) > 0 ? p.Int(18) : Fps(p.Int(1)), p.Int(2), seq, 0, id, p.Int(8), p.Int(12), p.Int(14), p.Int(15), p.Int(7), p.Bool(11));
         }
         if (rpc.Bytes(3) is { } fps) return new(-1, 0, 0, Fps(ProtoFields.Read(fps).Int(1)), 0, seq, 0, id);
         if (rpc.Bytes(4) is { } quality) return new(-1, 0, 0, 0, ProtoFields.Read(quality).Int(1), seq, 0, id);
@@ -47,6 +47,12 @@ public static class HostCaptureProtocol
         if (update.RpcId is { } id) return Join(Int(1, update.Sequence), Blob(22, Join(Blob(1, Int(1, id)), Blob(2, success ? [] : Int(1, 1)))));
         return Join(Int(1, update.Sequence), Blob(19, Join(Int(1, update.Sequence), Int(2, (ulong)update.Flag), Int(3, success ? 0u : 1u))));
     }
+    // Official CaptureSettingSync (envelope 25). Report the actual encoder state,
+    // including chroma, so native clients do not restore their previous toggle value.
+    public static byte[] Sync(ulong sequence, ulong timestamp, int fps, int quality, int chromaFormat, int customBitrate, int width, int height)
+        => Join(Int(1, sequence), Int(2, timestamp), Blob(25, Join(Int(1, (ulong)fps), Int(2, (ulong)quality),
+            Int(3, (ulong)chromaFormat), customBitrate > 0 ? Int(4, (ulong)customBitrate) : [],
+            Int(5, (ulong)width), Int(6, (ulong)height), Int(9, (ulong)width), Int(10, (ulong)height))));
     private static byte[] Join(params byte[][] parts) => parts.SelectMany(x => x).ToArray();
     private static byte[] Int(uint tag, ulong value) => Join(Var(tag << 3), Var(value));
     private static byte[] Blob(uint tag, byte[] value) => Join(Var(tag << 3 | 2), Var((ulong)value.Length), value);

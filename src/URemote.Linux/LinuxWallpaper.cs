@@ -7,7 +7,10 @@ namespace URemote.Linux;
 
 public static class LinuxWallpaper
 {
-    public static async Task<byte[]?> RenderAsync(string ffmpeg,CancellationToken ct,string? home=null,string? shell=null)
+    public static Task<byte[]?> RenderAsync(string ffmpeg, CancellationToken ct, string? home = null, string? shell = null)
+        => RenderAsync(ffmpeg, ct, home, shell, onSource: null, desktop: null);
+
+    public static async Task<byte[]?> RenderAsync(string ffmpeg, CancellationToken ct, string? home, string? shell, Action<string>? onSource, DesktopEnvironmentInfo? desktop)
     {
         home??=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var stateRoot=Environment.GetEnvironmentVariable("XDG_STATE_HOME")??Path.Combine(home,".local/state");
@@ -15,28 +18,64 @@ public static class LinuxWallpaper
         JsonObject? session=null;
         JsonObject? settings=null;
         var source=Environment.GetEnvironmentVariable("UREMOTE_WALLPAPER");
+        string? kind = null;
+        X11Wallpaper.Source? chosen = null;
+        if (string.IsNullOrEmpty(source) && OperatingSystem.IsWindows())
+        {
+            source = WindowsDesktop.WallpaperPath();
+            if (string.IsNullOrEmpty(source)) return null;
+        }
         if (string.IsNullOrEmpty(source) && OperatingSystem.IsMacOS())
         {
             source = MacDesktop.WallpaperPath();
             if (string.IsNullOrEmpty(source)) return null;
         }
-        if (string.IsNullOrEmpty(source) && DesktopEnvironmentInfo.Current.Name == "KDE Plasma")
+        if (string.IsNullOrEmpty(source) && !OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
         {
-            var dataRoots = new[] { Environment.GetEnvironmentVariable("XDG_DATA_HOME") ?? Path.Combine(home,".local/share") }
-                .Concat((Environment.GetEnvironmentVariable("XDG_DATA_DIRS") ?? "/usr/local/share:/usr/share").Split(':', StringSplitOptions.RemoveEmptyEntries)).ToArray();
-            source = KdeWallpaper.Resolve(configRoot, dataRoots);
-            if (source is null) return null;
+            desktop ??= DesktopEnvironmentInfo.Current;
+            if (desktop.Name == "KDE Plasma")
+            {
+                var dataRoots = new[] { Environment.GetEnvironmentVariable("XDG_DATA_HOME") ?? Path.Combine(home,".local/share") }
+                    .Concat((Environment.GetEnvironmentVariable("XDG_DATA_DIRS") ?? "/usr/local/share:/usr/share").Split(':', StringSplitOptions.RemoveEmptyEntries)).ToArray();
+                source = KdeWallpaper.Resolve(configRoot, dataRoots);
+                if (source is null) return null;
+                kind = "kde";
+            }
+            else if (desktop.Name == "XFCE")
+            {
+                chosen = X11Wallpaper.ResolveXfce(configRoot);
+                kind = chosen is null ? null : "xfce";
+            }
+            else if (desktop.Name is "GNOME" or "Cinnamon" or "MATE" or "Unity")
+            {
+                chosen = X11Wallpaper.ResolveGsettings(desktop.Name);
+                kind = chosen is null ? null : "gsettings";
+            }
+            else if (desktop.Name == "niri")
+            {
+                session=Read(Path.Combine(stateRoot,"DankMaterialShell/session.json"));
+                settings=Read(Path.Combine(configRoot,"DankMaterialShell/settings.json"));
+                if(session is null)return null;
+                var light=session["isLightMode"]?.GetValue<bool>()??false;
+                source=session["wallpaperPath"]?.GetValue<string>()??"";
+                if(session["perModeWallpaper"]?.GetValue<bool>()==true)source=session[light?"wallpaperPathLight":"wallpaperPathDark"]?.GetValue<string>()??source;
+                if(session["perMonitorWallpaper"]?.GetValue<bool>()==true && session["monitorWallpapers"] is JsonObject monitors)
+                    source=monitors.FirstOrDefault(x=>x.Value is JsonValue).Value?.GetValue<string>()??source;
+                kind = "niri";
+            }
         }
-        if(string.IsNullOrEmpty(source)) {
-            session=Read(Path.Combine(stateRoot,"DankMaterialShell/session.json"));
-            settings=Read(Path.Combine(configRoot,"DankMaterialShell/settings.json"));
-            if(session is null)return null;
-            var light=session["isLightMode"]?.GetValue<bool>()??false;
-            source=session["wallpaperPath"]?.GetValue<string>()??"";
-            if(session["perModeWallpaper"]?.GetValue<bool>()==true)source=session[light?"wallpaperPathLight":"wallpaperPathDark"]?.GetValue<string>()??source;
-            if(session["perMonitorWallpaper"]?.GetValue<bool>()==true && session["monitorWallpapers"] is JsonObject monitors)
-                source=monitors.FirstOrDefault(x=>x.Value is JsonValue).Value?.GetValue<string>()??source;
+        if (chosen is { } backdrop)
+        {
+            if (backdrop.Color is not null && backdrop.Image is null)
+            {
+                var colored = await X11Wallpaper.RenderColorAsync(ffmpeg, backdrop.Color, backdrop.SecondColor, backdrop.Vertical, ct);
+                if (colored is null) return null;
+                onSource?.Invoke(kind!);
+                return colored;
+            }
+            source = backdrop.Image ?? "";
         }
+        if (string.IsNullOrEmpty(source)) return null;
         if(source.StartsWith("file://",StringComparison.Ordinal))source=new Uri(source).LocalPath;
         var scratch=Path.Combine(Path.GetTempPath(),"uremote-wallpaper-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(scratch);
         try {
@@ -56,7 +95,9 @@ public static class LinuxWallpaper
             var target=Path.Combine(scratch,"wallpaper.png");
             if (OperatingSystem.IsMacOS()) { ct.ThrowIfCancellationRequested(); MacDesktop.RenderWallpaper(source, target); }
             else await RunAsync(ffmpeg,["-hide_banner","-loglevel","error","-nostdin","-i",source,"-frames:v","1","-vf","scale=960:540:force_original_aspect_ratio=increase,crop=960:540","-map_metadata","-1",target],ct);
-            var bytes=await File.ReadAllBytesAsync(target,ct);if(bytes.Length>5_000_000)throw new IOException("Wallpaper preview exceeds size limit.");return bytes;
+            var bytes=await File.ReadAllBytesAsync(target,ct);if(bytes.Length>5_000_000)throw new IOException("Wallpaper preview exceeds size limit.");
+            if (kind is not null) onSource?.Invoke(kind);
+            return bytes;
         } finally {Directory.Delete(scratch,true);}
     }
     private static JsonObject? Read(string path)=>File.Exists(path)&&new FileInfo(path).Length<2_000_000?JsonNode.Parse(File.ReadAllText(path)) as JsonObject:null;
@@ -102,10 +143,11 @@ public static class LinuxWallpaper
         }
         return root.ToString();
     }
+    internal static Task RunTool(string exe, string[] args, CancellationToken ct) => RunAsync(exe, args, ct);
     private static async Task RunAsync(string exe,string[] args,CancellationToken ct)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(15));
-        using var p=new Process{StartInfo=new(exe){UseShellExecute=false,RedirectStandardError=true,RedirectStandardOutput=true}};
+        using var p=new Process{StartInfo=new(exe){UseShellExecute=false,RedirectStandardError=true,RedirectStandardOutput=true,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden}};
         foreach(var arg in args)p.StartInfo.ArgumentList.Add(arg);p.Start();var error=p.StandardError.ReadToEndAsync(timeout.Token);var output=p.StandardOutput.ReadToEndAsync(timeout.Token);
         try {await p.WaitForExitAsync(timeout.Token);await Task.WhenAll(error,output);if(p.ExitCode!=0)throw new IOException("Wallpaper rendering failed.");}
         finally {if(!p.HasExited)p.Kill(true);}

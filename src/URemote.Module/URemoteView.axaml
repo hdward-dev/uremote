@@ -1,0 +1,403 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:URemote.Module"
+             x:Class="URemote.Module.URemoteView"
+             x:CompileBindings="False"
+             Background="{DynamicResource AppPageBrush}"
+             FontFamily="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Segoe UI">
+  <Grid>
+    <Grid x:Name="body" ColumnDefinitions="300,*,190" RowDefinitions="*,Auto">
+      <Border x:Name="hostBorder" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0">
+        <ScrollViewer x:Name="hostScroll" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="hostPanel" Spacing="8" Margin="14,12">
+            <Grid ColumnDefinitions="Auto,*">
+              <TextBlock Text="本机被控" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <TextBlock x:Name="hostBadge" Grid.Column="1" Text="●  正在准备" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"
+                         Margin="8,0,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource AppPositiveBrush}"/>
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+              <TextBlock Text="允许本机被控" FontSize="14" VerticalAlignment="Center" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <ToggleSwitch x:Name="hostSwitch" Grid.Column="1" MinWidth="0" IsEnabled="False" OnContent="{x:Null}" OffContent="{x:Null}"
+                            AutomationProperties.Name="允许本机被远程控制"/>
+            </Grid>
+            <ItemsControl x:Name="localScreens">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="local:LocalScreenModel" x:CompileBindings="True">
+                  <Button Classes="ad-flat" Padding="4" Margin="0,0,6,2" Command="{Binding OpenSettings}" ToolTip.Tip="本机屏幕快照 · 点击修改共享设置">
+                    <StackPanel Spacing="3">
+                      <Image Width="112" Height="63" Stretch="Uniform" Source="{Binding Snapshot}" IsVisible="{Binding ShowSnapshot}"/>
+                      <TextBlock Text="{Binding Caption}" FontSize="11" Classes="ad-muted"/>
+                    </StackPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="detail" Text="正在读取登录状态和显示器…" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource AppMutedBrush}"/>
+            <Button Content="显示器与共享设置" HorizontalAlignment="Stretch" Click="ScreenLink_Click"/>
+            <Separator/>
+            <TextBlock Text="让他人协助我" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+            <StackPanel Spacing="6">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="允许远程协助" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                <ToggleSwitch x:Name="assistanceSwitch" Grid.Column="1" MinWidth="0" OnContent="{x:Null}" OffContent="{x:Null}"/>
+              </Grid>
+              <StackPanel x:Name="assistanceCredentials" Spacing="6">
+                <TextBlock Text="协助码" FontSize="12" Classes="ad-muted"/>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                  <SelectableTextBlock x:Name="assistanceId" Text="正在获取…" FontSize="26" FontWeight="Bold" VerticalAlignment="Center" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                  <Button x:Name="copyId" Grid.Column="1" Width="34" Height="34" Padding="8" Classes="ad-flat" VerticalAlignment="Center" ToolTip.Tip="复制协助码" AutomationProperties.Name="复制协助码">
+                    <Path Width="18" Height="18" Stretch="Uniform" StrokeThickness="1.5" Stroke="{DynamicResource AppStrongTextBrush}" Data="M8,7 H19 V21 H8 Z M5,17 H3 V3 H14 V5"/>
+                  </Button>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                  <ComboBox x:Name="codeMode" SelectedIndex="0" HorizontalAlignment="Stretch">
+                    <ComboBoxItem>临时验证码</ComboBoxItem>
+                    <ComboBoxItem>自定义验证码</ComboBoxItem>
+                  </ComboBox>
+                  <Button x:Name="codeHelp" Grid.Column="1" Content="!" Width="28" Height="28" Padding="0" VerticalAlignment="Center"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                          AutomationProperties.Name="验证码使用说明" ToolTip.Tip="验证码使用说明">
+                    <Button.Flyout>
+                      <Flyout>
+                        <TextBlock x:Name="assistanceHelp" MaxWidth="260" TextWrapping="Wrap"/>
+                      </Flyout>
+                    </Button.Flyout>
+                  </Button>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="2">
+                  <TextBox x:Name="assistanceCode" IsReadOnly="True" PasswordChar="•" FontSize="14" Height="34" MinWidth="0" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
+                  <Button x:Name="reveal" Grid.Column="1" Width="30" Height="34" Padding="0" Classes="ad-flat" VerticalAlignment="Center"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                    <Viewbox Width="18" Height="18">
+                      <Canvas Width="24" Height="24">
+                        <Path Stroke="{DynamicResource AppStrongTextBrush}" StrokeThickness="1.5" Stretch="Uniform" Data="M2,12 C6,4 18,4 22,12 C18,20 6,20 2,12 Z M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12"/>
+                      </Canvas>
+                    </Viewbox>
+                  </Button>
+                  <Button x:Name="rotate" Grid.Column="2" Width="30" Height="34" Padding="0" Classes="ad-flat" VerticalAlignment="Center"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                    <Viewbox Width="18" Height="18">
+                      <Canvas Width="24" Height="24">
+                        <Path Stroke="{DynamicResource AppStrongTextBrush}" StrokeThickness="1.5" Stretch="Uniform" Data="M20,9 A8,8 0 1 0 20,16 M20,3 V9 H14"/>
+                      </Canvas>
+                    </Viewbox>
+                  </Button>
+                  <Button x:Name="copyCode" Grid.Column="3" Width="30" Height="34" Padding="0" Classes="ad-flat" VerticalAlignment="Center"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center" ToolTip.Tip="复制验证码" AutomationProperties.Name="复制验证码">
+                    <Viewbox Width="18" Height="18">
+                      <Canvas Width="24" Height="24">
+                        <Path Stroke="{DynamicResource AppStrongTextBrush}" StrokeThickness="1.5" Stretch="Uniform" Data="M8,7 H19 V21 H8 Z M5,17 H3 V3 H14 V5"/>
+                      </Canvas>
+                    </Viewbox>
+                  </Button>
+                </Grid>
+                <StackPanel x:Name="customEditor" IsVisible="False" Spacing="8">
+                  <TextBlock Text="设置自定义验证码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                  <TextBox x:Name="customInput" PasswordChar="●" MaxLength="32" PlaceholderText="8–32 位，包含字母和数字"/>
+                  <TextBox x:Name="customConfirm" PasswordChar="●" MaxLength="32" PlaceholderText="再次输入验证码"/>
+                  <WrapPanel>
+                    <Button x:Name="saveCustom" Content="保存"/>
+                    <Button x:Name="cancelCustom" Content="取消"/>
+                    <Button x:Name="removeCustom" Content="清除自定义码"/>
+                  </WrapPanel>
+                  <TextBlock Text="仅保存在本机私有文件中，重启后保留。" FontSize="11" Classes="ad-muted" TextWrapping="Wrap"/>
+                </StackPanel>
+              </StackPanel>
+              <TextBlock x:Name="assistanceHint" FontSize="12" TextWrapping="Wrap" IsVisible="False" Foreground="{DynamicResource AppMutedBrush}"/>
+              <Button x:Name="reload" Content="重新获取" HorizontalAlignment="Stretch"/>
+            </StackPanel>
+            <StackPanel x:Name="controlConnectionPanel" Spacing="8" IsVisible="False">
+              <Separator/>
+              <TextBlock Text="●  当前控制连接" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AppPositiveBrush}"/>
+              <Border Classes="ad-card" Padding="10">
+                <StackPanel Spacing="6">
+                  <TextBlock x:Name="connectionDevice" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                  <TextBlock x:Name="connectionDetails" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+                  <TextBlock x:Name="connectionLocation" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <TextBlock Text="已连接时长" FontSize="12" Classes="ad-muted" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="connectionDuration" Grid.Column="1" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                  </Grid>
+                  <TextBlock x:Name="connectionStarted" FontSize="12" Classes="ad-muted"/>
+                  <Button x:Name="disconnectControl" Content="断开控制" HorizontalAlignment="Stretch"/>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Disabled">
+        <ContentControl x:Name="page" Margin="24"/>
+      </ScrollViewer>
+
+      <Border Grid.Column="2" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1,0,0,0">
+        <DockPanel x:Name="sidebar" Margin="12">
+          <StackPanel DockPanel.Dock="Top" Spacing="5" Margin="14,12,0,30">
+            <TextBlock Text="U远程" FontSize="25" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+            <TextBlock Text="远程工作空间" FontSize="12" Classes="ad-muted"/>
+          </StackPanel>
+          <Button x:Name="navAccount" DockPanel.Dock="Bottom" Classes="ad-nav" Click="Nav_Click" Tag="2" AutomationProperties.Name="账号与设置" ToolTip.Tip="账号与设置">
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <TextBlock Text="⚙" FontSize="18"/>
+              <TextBlock Text="账号与设置" FontSize="14"/>
+            </StackPanel>
+          </Button>
+          <StackPanel Spacing="8">
+            <Button x:Name="navDevices" Classes="ad-nav" Click="Nav_Click" Tag="0" AutomationProperties.Name="我的设备" ToolTip.Tip="我的设备">
+              <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="▤" FontSize="18"/><TextBlock Text="我的设备" FontSize="14"/></StackPanel>
+            </Button>
+            <Button x:Name="navLocal" Classes="ad-nav" Click="Nav_Click" Tag="5" AutomationProperties.Name="本地连接" ToolTip.Tip="本地连接">
+              <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="▱" FontSize="18"/><TextBlock Text="本地连接" FontSize="14"/></StackPanel>
+            </Button>
+            <Button x:Name="navHost" Classes="ad-nav" Click="Nav_Click" Tag="1" AutomationProperties.Name="本机被控" ToolTip.Tip="本机被控">
+              <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="▣" FontSize="18"/><TextBlock Text="本机被控" FontSize="14"/></StackPanel>
+            </Button>
+            <Button x:Name="navAssist" Classes="ad-nav" Click="Nav_Click" Tag="3" AutomationProperties.Name="远程协助" ToolTip.Tip="远程协助">
+              <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="♧" FontSize="18"/><TextBlock Text="远程协助" FontSize="14"/></StackPanel>
+            </Button>
+            <Button x:Name="navFiles" Classes="ad-nav" Click="Nav_Click" Tag="4" AutomationProperties.Name="文件传输" ToolTip.Tip="文件传输">
+              <StackPanel Orientation="Horizontal" Spacing="12"><TextBlock Text="⇄" FontSize="18"/><TextBlock Text="文件传输" FontSize="14"/></StackPanel>
+            </Button>
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <Border Grid.Row="1" Grid.ColumnSpan="3" Padding="18,8" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0">
+        <TextBlock x:Name="footerText" FontSize="11" Classes="ad-muted"/>
+      </Border>
+    </Grid>
+
+    <Grid x:Name="pageStore" IsVisible="False" IsHitTestVisible="False">
+      <StackPanel x:Name="devicePage" Spacing="16">
+        <TextBlock x:Name="catalogCount" Text="我的设备" FontSize="28" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+        <TextBlock x:Name="catalogHint" Text="登录后，同步你的 UU 账号设备" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+          <TextBox x:Name="search" Classes="ad-compact" PlaceholderText="搜索设备名称" MinWidth="160"/>
+          <ComboBox x:Name="filter" Grid.Column="1" Classes="ad-compact" Width="112" SelectedIndex="0">
+            <ComboBoxItem>全部设备</ComboBoxItem>
+            <ComboBoxItem>在线设备</ComboBoxItem>
+            <ComboBoxItem>我的收藏</ComboBoxItem>
+            <ComboBoxItem>电脑</ComboBoxItem>
+            <ComboBoxItem>移动设备</ComboBoxItem>
+          </ComboBox>
+          <Button x:Name="refresh" Grid.Column="2" Content="刷新" Click="RefreshDevices_Click"/>
+          <Button x:Name="viewMode" Grid.Column="3" Content="列表" MinWidth="50" Click="ViewMode_Click"/>
+        </Grid>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button x:Name="deviceTabAll" Classes="ad-chip selected" Content="全部设备" Click="DeviceTab_Click" Tag="0"/>
+          <Button x:Name="deviceTabFav" Classes="ad-chip" Content="收藏" Click="DeviceTab_Click" Tag="1"/>
+        </StackPanel>
+        <StackPanel x:Name="deviceDetail" Spacing="10" IsVisible="False"/>
+        <local:DeviceCardWrap x:Name="deviceRows" HorizontalAlignment="Stretch" MinItemWidth="380" MaxItemWidth="640" ItemSpacing="16" LineSpacing="16"/>
+        <TextBlock Text="预览为设备上传的桌面壁纸，非实时画面。远程控制将在独立窗口中打开。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+      </StackPanel>
+
+      <StackPanel x:Name="hostPage" Spacing="16">
+        <TextBlock Text="本机被控" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+        <TextBlock x:Name="hostIntro" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+        <Border Classes="ad-card" Padding="20">
+          <StackPanel x:Name="settings" Spacing="14">
+            <TextBlock Text="共享哪些屏幕" Classes="ad-heading"/>
+            <ItemsControl x:Name="screens">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="local:ScreenShareModel" x:CompileBindings="True">
+                  <CheckBox Content="{Binding Label}" IsChecked="{Binding IsChecked}" Margin="0,0,16,8"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="screenHint" FontSize="12" TextWrapping="Wrap" Classes="ad-muted" IsVisible="False"/>
+            <Separator/>
+            <TextBlock Text="连接权限" Classes="ad-heading"/>
+            <CheckBox x:Name="input" Content="允许键鼠控制和远程终端" IsChecked="True"/>
+            <CheckBox x:Name="audio" Content="共享系统声音（不采集麦克风）" IsChecked="True"/>
+            <CheckBox x:Name="clipboard" Content="同步文本剪贴板" IsChecked="True"/>
+            <TextBlock Text="保持被控的时长" FontSize="13" Classes="ad-muted"/>
+            <ComboBox x:Name="duration" SelectedIndex="0" HorizontalAlignment="Stretch">
+              <ComboBoxItem>保持开启，直到停止</ComboBoxItem>
+              <ComboBoxItem>5 分钟</ComboBoxItem>
+              <ComboBoxItem>30 分钟</ComboBoxItem>
+              <ComboBoxItem>1 小时</ComboBoxItem>
+            </ComboBox>
+          </StackPanel>
+        </Border>
+        <Border Classes="ad-card" Padding="20">
+          <StackPanel Spacing="9">
+            <TextBlock Text="连接与退出" Classes="ad-heading"/>
+            <TextBlock Text="主控退出后，本机继续等待连接。终端会话会保留，方便再次进入。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+            <TextBlock Text="本机关闭被控开关，或退出 AsterDock，将结束共享与终端会话。修改共享权限前，请先关闭被控开关。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <StackPanel x:Name="accountPage" Spacing="16" MaxWidth="860" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="6">
+          <TextBlock Text="账号与设置" Classes="ad-page-title"/>
+          <TextBlock Text="管理登录账号，查看运行环境与应用配置。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+        </StackPanel>
+        <Border Classes="ad-card" Padding="20">
+          <StackPanel Spacing="14">
+            <Grid x:Name="accountHeadingGrid" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+              <Border Width="48" Height="48" CornerRadius="24" Background="{DynamicResource AppAccentSurfaceBrush}" VerticalAlignment="Top">
+                <PathIcon Width="22" Height="22" Foreground="{DynamicResource AppAccentBrush}" Data="M12,2 A5,5 0 1 1 12,12 A5,5 0 1 1 12,2 M3,22 C3,12 21,12 21,22 Z"/>
+              </Border>
+              <StackPanel Grid.Column="1" Spacing="5">
+                <TextBlock x:Name="accountHeading" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                <SelectableTextBlock x:Name="accountIdentity" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" IsVisible="False" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                <TextBlock x:Name="accountState" Text="正在读取账号状态" FontSize="12"/>
+              </StackPanel>
+              <Button x:Name="logout" Grid.Column="2" Content="退出登录" IsVisible="False" VerticalAlignment="Top" Padding="14,8"/>
+            </Grid>
+            <TextBlock x:Name="accountDescription" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            <StackPanel x:Name="loginPanel" Spacing="10" IsVisible="False" MaxWidth="440" HorizontalAlignment="Left">
+              <TextBlock Text="手机号" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <TextBox x:Name="mobile" PlaceholderText="手机号（+86）" MaxLength="11"/>
+                <Button x:Name="sendCode" Grid.Column="1" Content="发送验证码"/>
+              </Grid>
+              <TextBlock Text="短信验证码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <TextBox x:Name="code" PlaceholderText="短信验证码" MaxLength="10" PasswordChar="●"/>
+              <Button x:Name="completeLogin" Classes="ad-primary" Content="登录并启用被控" HorizontalAlignment="Stretch"/>
+              <TextBlock Text="验证码仅用于本次登录。点击“发送验证码”后才会发送短信。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            </StackPanel>
+            <TextBlock x:Name="logoutHint" Text="退出登录会停止本机被控，并断开本应用的远程连接。" FontSize="12" TextWrapping="Wrap" IsVisible="False" Classes="ad-muted"/>
+          </StackPanel>
+        </Border>
+        <Border Classes="ad-card" Padding="20">
+          <StackPanel Spacing="12">
+            <TextBlock Text="功能状态" Classes="ad-heading"/>
+            <StackPanel Spacing="5">
+              <TextBlock Text="桌面环境" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <TextBlock x:Name="desktopEnvironment" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            </StackPanel>
+            <Separator/>
+            <StackPanel Spacing="5">
+              <TextBlock Text="远程控制" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <TextBlock Text="画面共享、键鼠控制、远程终端与文件传输" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            </StackPanel>
+            <StackPanel Spacing="5">
+              <TextBlock Text="兼容性验证" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+              <TextBlock Text="系统声音、剪贴板及不同桌面环境仍在持续验证" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+        <Border Classes="ad-card" Padding="16">
+          <Expander Header="高级设置" HorizontalContentAlignment="Stretch">
+            <StackPanel x:Name="advancedSettings" Spacing="12" Margin="0,14,0,0">
+              <TextBlock Text="本机登录文件" FontSize="13" Classes="ad-muted"/>
+              <TextBox x:Name="identity" PlaceholderText="本机登录文件路径"/>
+              <TextBlock Text="视频编码器" FontSize="13" Classes="ad-muted"/>
+              <TextBox x:Name="encoder" PlaceholderText="FFmpeg 可执行文件路径"/>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="detectEncoder" Content="自动检测"/>
+                <Button x:Name="applyEncoder" Content="验证并应用"/>
+              </StackPanel>
+              <TextBlock x:Name="encoderHint" Text="填写 FFmpeg 完整路径并验证。应用后用于新连接，当前连接不受影响。" TextWrapping="Wrap" Classes="ad-muted"/>
+            </StackPanel>
+          </Expander>
+        </Border>
+      </StackPanel>
+
+      <StackPanel x:Name="assistancePage" Spacing="18">
+        <TextBlock Text="远程协助" Classes="ad-page-title"/>
+        <TextBlock Text="连接对方的设备" FontSize="16" Classes="ad-muted"/>
+        <Border Classes="ad-card" Padding="20" MaxWidth="520" HorizontalAlignment="Left">
+          <StackPanel Spacing="14">
+            <TextBlock Text="对方的协助码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+            <TextBox x:Name="partnerId" PlaceholderText="输入对方的协助码" MaxLength="20"/>
+            <TextBlock Text="对方的验证码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+            <TextBox x:Name="partnerCode" PlaceholderText="输入对方的验证码" PasswordChar="●" MaxLength="128"/>
+            <Button x:Name="assistanceConnect" Classes="ad-primary" Content="连接对方" HorizontalAlignment="Stretch"/>
+            <TextBlock x:Name="assistanceConnectHint" Text="请向对方获取协助码和验证码，连接后将在独立窗口显示远程桌面。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <StackPanel x:Name="filePage" Spacing="16">
+        <TextBlock Text="文件传输" Classes="ad-page-title"/>
+        <Border Classes="ad-card" Padding="20">
+          <StackPanel Spacing="12">
+            <TextBlock Text="文件传输" Classes="ad-heading"/>
+            <TextBlock Text="通过 UU 官方客户端传入文件，或取出已放入此目录的文件。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+            <TextBlock x:Name="transferPath" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+            <TextBlock x:Name="transferState" Text="接收和取出仅限此文件夹" TextWrapping="Wrap" Classes="ad-muted"/>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Button x:Name="openTransfer" Content="打开接收目录" Click="OpenTransfer_Click"/>
+              <Button x:Name="addTransfer" Content="添加待取文件" Click="AddTransfer_Click"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <StackPanel x:Name="localPage" Spacing="16" MaxWidth="680" HorizontalAlignment="Stretch">
+        <TextBlock Text="本地连接" FontSize="28" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+        <TextBlock Text="通过 IP 地址或主机名直接连接，无需登录 UU 账号。" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+        <StackPanel x:Name="localProtocolTabs" Orientation="Horizontal" Spacing="8">
+          <Button x:Name="localRdpTab" Classes="ad-chip selected" Content="RDP" Padding="24,9" Click="LocalProtocol_Click" Tag="0"/>
+          <Button x:Name="localVncTab" Classes="ad-chip" Content="VNC" Padding="24,9" Click="LocalProtocol_Click" Tag="1"/>
+        </StackPanel>
+        <ContentControl x:Name="localForms"/>
+        <TextBlock Text="最近连接" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource AppStrongTextBrush}"/>
+        <TextBlock Text="保留最近 5 条成功连接，不保存密码。" FontSize="12" Classes="ad-muted"/>
+        <TextBlock x:Name="localHistoryEmpty" Text="连接成功后，最近 5 条记录会显示在这里。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted" IsVisible="False"/>
+        <ItemsControl x:Name="localHistoryRows">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="local:LocalHistoryModel" x:CompileBindings="True">
+              <Border Classes="ad-card" Padding="14" Margin="0,0,0,10">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding Title}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+                    <TextBlock Text="{Binding Account}" FontSize="12" Classes="ad-muted"/>
+                  </StackPanel>
+                  <Button Grid.Column="1" Content="快速连接" VerticalAlignment="Center" Command="{Binding QuickConnect}"/>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <TextBlock x:Name="localHistoryState" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+      </StackPanel>
+
+      <Border x:Name="rdpForm" Classes="ad-card" Padding="20">
+        <StackPanel Spacing="12">
+          <TextBlock Text="服务器地址与端口" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <TextBox x:Name="rdpAddress" PlaceholderText="例如 192.168.1.10 或 desktop.local" AutomationProperties.Name="RDP 服务器地址"/>
+            <NumericUpDown x:Name="rdpPort" Grid.Column="1" Minimum="1" Maximum="65535" Value="3389" FormatString="0" Width="120" AutomationProperties.Name="RDP 端口"/>
+          </Grid>
+          <TextBlock Text="域" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <TextBox x:Name="rdpDomain" PlaceholderText="可选，例如 WORKGROUP"/>
+          <TextBlock Text="用户名" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <TextBox x:Name="rdpUsername" PlaceholderText="远程电脑的用户名"/>
+          <TextBlock Text="密码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <TextBox x:Name="rdpPassword" PasswordChar="●" PlaceholderText="远程电脑的登录密码" AutomationProperties.Name="RDP 密码"/>
+          <TextBlock Text="连接到已启用远程桌面的电脑，默认端口 3389。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+          <TextBlock Text="画面将在 U远程独立窗口中打开。密码仅用于本次连接，不会保存。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+          <Button Content="连接 RDP" HorizontalAlignment="Left" Padding="24,10" Click="LocalConnect_Click" Tag="0"/>
+          <TextBlock x:Name="rdpState" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+        </StackPanel>
+      </Border>
+      <Border x:Name="vncForm" Classes="ad-card" Padding="20">
+        <StackPanel Spacing="12">
+          <TextBlock Text="服务器地址与端口" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <TextBox x:Name="vncAddress" PlaceholderText="例如 192.168.1.10 或 desktop.local" AutomationProperties.Name="VNC 服务器地址"/>
+            <NumericUpDown x:Name="vncPort" Grid.Column="1" Minimum="1" Maximum="65535" Value="5900" FormatString="0" Width="120" AutomationProperties.Name="VNC 端口"/>
+          </Grid>
+          <TextBlock Text="密码" FontSize="13" Foreground="{DynamicResource AppStrongTextBrush}"/>
+          <TextBox x:Name="vncPassword" PasswordChar="●" PlaceholderText="VNC 访问密码" AutomationProperties.Name="VNC 密码"/>
+          <TextBlock Text="连接到已启用 VNC 的电脑，默认端口 5900；支持无认证或 VNC 密码认证（前 8 字节）。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+          <TextBlock Text="画面将在 U远程独立窗口中打开。密码仅用于本次连接，不会保存。" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+          <Button Content="连接 VNC" HorizontalAlignment="Left" Padding="24,10" Click="LocalConnect_Click" Tag="1"/>
+          <TextBlock x:Name="vncState" FontSize="12" TextWrapping="Wrap" Classes="ad-muted"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

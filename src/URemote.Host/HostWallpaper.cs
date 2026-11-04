@@ -9,15 +9,15 @@ internal static class HostWallpaper
     private sealed record Cache(string Hash,DateTimeOffset Uploaded,string DeviceId = "");
     public static async Task RunAsync(LoginState state,string ffmpeg,string identityPath,Action<string> report,CancellationToken ct)
     {
-        if(!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())return;
+        if(!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows())return;
         using var api=new UuWallpaperApi(state);
         var cachePath=identityPath+".wallpaper.json";
         Cache? cache=null;
         try {if(File.Exists(cachePath))cache=JsonSerializer.Deserialize<Cache>(await File.ReadAllTextAsync(cachePath,ct));}catch(Exception e) when(e is IOException or UnauthorizedAccessException or JsonException){}
-        var missingReported=false;var failed=false;
+        var missingReported=false;var failed=false;string? loggedSource=null;
         while(!ct.IsCancellationRequested) {
             try {
-                var png=await LinuxWallpaper.RenderAsync(ffmpeg,ct);
+                var png=await LinuxWallpaper.RenderAsync(ffmpeg,ct,home:null,shell:null,onSource:kind=>{if(loggedSource==kind)return;loggedSource=kind;report("wallpaper-source="+kind);},desktop:null);
                 if(png is null) {if(!missingReported)report("wallpaper-source-unavailable");missingReported=true;}
                 else {
                     missingReported=false;
@@ -26,7 +26,7 @@ internal static class HostWallpaper
                         await api.UploadAsync(png,ct);cache=new(hash,DateTimeOffset.UtcNow,state.DeviceId);failed=false;
                         var temporary=cachePath+"."+Guid.NewGuid().ToString("N")+".tmp";
                         try {
-                            await using(var stream=new FileStream(temporary,new FileStreamOptions{Mode=FileMode.CreateNew,Access=FileAccess.Write,UnixCreateMode=UnixFileMode.UserRead|UnixFileMode.UserWrite}))
+                            await using(var stream=new FileStream(temporary,OperatingSystem.IsWindows()?new FileStreamOptions{Mode=FileMode.CreateNew,Access=FileAccess.Write}:new FileStreamOptions{Mode=FileMode.CreateNew,Access=FileAccess.Write,UnixCreateMode=UnixFileMode.UserRead|UnixFileMode.UserWrite}))
                                 await JsonSerializer.SerializeAsync(stream,cache,cancellationToken:ct);
                             File.Move(temporary,cachePath,true);
                         } finally {if(File.Exists(temporary))File.Delete(temporary);}

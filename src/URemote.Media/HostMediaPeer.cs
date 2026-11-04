@@ -34,7 +34,12 @@ public sealed class HostMediaPeer : IDisposable
     private long lastReceiverLog;
     private int nackCount, keyFrameRequests;
     private readonly bool[] pathReported = new bool[5];
-    private readonly uint?[] pacedTimestamps = new uint?[5];
+    private readonly VideoRtpClock?[] pacedClocks = new VideoRtpClock?[5];
+    private readonly VideoPacketPacer?[] packetPacers = new VideoPacketPacer?[5];
+    private readonly IPAddress?[] pacingAddresses = new IPAddress?[5];
+    private readonly bool[] onLinkPaths = new bool[5];
+    private readonly bool[] pacingReported = new bool[5];
+    private readonly long[] burstSuppressedUntil = new long[5];
     private readonly TaskCompletionSource gatheringComplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly bool enableAudio;
     private int disposed;
@@ -72,6 +77,9 @@ public sealed class HostMediaPeer : IDisposable
                 var compactNow = unchecked((uint)(ulong)(ntpSeconds * 65536.0));
                 foreach (var report in reports.Take(5))
                 {
+                    var reportStream = FindVideo(report.SSRC);
+                    if (reportStream is >= 0 and < 5 && report.FractionLost >= 8)
+                        Interlocked.Exchange(ref burstSuppressedUntil[reportStream], Environment.TickCount64 + 10000);
                     var rtt = FindVideo(report.SSRC) >= 0
                         ? VideoFeedbackParser.RoundTripMilliseconds(compactNow, report.LastSenderReportTimestamp, report.DelaySinceLastSenderReport) : null;
                     Diagnostic?.Invoke($"rtcp-receiver;stream={index};loss256={report.FractionLost};lost={report.PacketsLost};jitter90k={report.Jitter};rtt-ms={rtt?.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}");
@@ -333,25 +341,31 @@ public sealed class HostMediaPeer : IDisposable
         }
         var format = stream.GetSendingFormat().ToVideoFormat();
         if (format.Codec != VideoCodecsEnum.H264) throw new InvalidOperationException("Expected negotiated H264.");
-        var timestamp = pacedTimestamps[streamIndex] ?? stream.LocalTrack.Timestamp;
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        long sentBytes = 0;
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var clock = pacedClocks[streamIndex] ??= new VideoRtpClock(stream.LocalTrack.Timestamp, now, System.Diagnostics.Stopwatch.Frequency);
+        var timestamp = clock.Stamp(now);
+        var destinationAddress = stream.IsUsingRelayEndPoint ? null : stream.DestinationEndPoint?.Address;
+        if (!pacingReported[streamIndex] || !Equals(destinationAddress, pacingAddresses[streamIndex]))
+        {
+            pacingAddresses[streamIndex] = destinationAddress;
+            onLinkPaths[streamIndex] = destinationAddress is not null && VideoPacketPacer.IsOnLink(destinationAddress);
+            pacingReported[streamIndex] = true;
+            Diagnostic?.Invoke($"video-pacer-policy;stream={streamIndex};on-link={onLinkPaths[streamIndex]};burst-window-ms=500");
+        }
+        var pacer = packetPacers[streamIndex] ??= new VideoPacketPacer(System.Diagnostics.Stopwatch.Frequency);
         foreach (var packet in H264RtpPayloads.Create(accessUnit))
         {
             try
             {
-                // Reserve 30% above the encoder limit for packet overhead; do not burst an entire IDR.
-                var due = TimeSpan.FromSeconds(sentBytes * 8.0 / (bitrate * 1.3));
-                var wait = due - watch.Elapsed;
+                var wait = pacer.Reserve(packet.Bytes.Length + 64, bitrate, System.Diagnostics.Stopwatch.GetTimestamp(),
+                    onLinkPaths[streamIndex], Environment.TickCount64 >= Interlocked.Read(ref burstSuppressedUntil[streamIndex]));
                 if (wait.TotalMilliseconds >= 1) await Task.Delay(wait, ct);
                 ct.ThrowIfCancellationRequested();
                 stream.SetRtpHeaderExtensionValue(TransportWideCCExtension.RTP_HEADER_EXTENSION_URI, null!);
                 stream.SendRtpRaw(packet.Bytes, timestamp, packet.Last ? 1 : 0, format.FormatID);
-                sentBytes += packet.Bytes.Length + 64;
             }
             finally { Array.Clear(packet.Bytes); }
         }
-        pacedTimestamps[streamIndex] = unchecked(timestamp + durationRtpUnits);
     }
 
     public void SendH264(byte[] accessUnit, uint durationRtpUnits, int streamIndex = 0)

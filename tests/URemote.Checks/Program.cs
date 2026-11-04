@@ -4,6 +4,26 @@ using URemote.Linux;
 using System.Diagnostics;
 using System.Text;
 
+if (args.Contains("--video-latency-checks"))
+{
+    await EncoderLatencyChecks.RunAsync(args.Last(), args.Contains("--throughput"));
+    return;
+}
+
+if (args.Contains("--video-timing-checks"))
+{
+    VideoTimingChecks.Run((ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    VideoPacerChecks.Run((ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    TrueColorChecks.Run((ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    return;
+}
+
+if (args.Contains("--host-recovery-checks"))
+{
+    HostRecoveryChecks.Run((ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    return;
+}
+
 if (args.Contains("--desktop-environment"))
 {
     static DesktopEnvironmentInfo Detect(params (string Key, string Value)[] values)
@@ -155,6 +175,19 @@ if (args.Contains("--pty-only"))
 }
 
 void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS: " + name); }
+if (args.Contains("--video-nvenc-resize-checks"))
+{
+    await QualityChecks.RunAsync(args.Last(), 60, 3840, 2160, 120, requireNvenc: true, outputWidth: 1920, outputHeight: 1080);
+    return;
+}
+if (args.Contains("--video-nvenc-checks") || args.Contains("--video-nvenc4k-checks") || args.Contains("--video-true-color-checks"))
+{
+    var highResolution = args.Contains("--video-nvenc4k-checks");
+    var trueColor = args.Contains("--video-true-color-checks");
+    await QualityChecks.RunAsync(args.Last(), 60, highResolution ? 3840 : 1920, highResolution ? 2160 : 1080, 240, requireNvenc: true,
+        chromaFormat: trueColor ? 3 : 1, outputWidth: args.Contains("--resize") ? 1280 : 0, outputHeight: args.Contains("--resize") ? 720 : 0);
+    return;
+}
 if (args.Contains("--video-4k-checks"))
 {
     await QualityChecks.RunAsync(args.Last(), 30, 3840, 2160, 60);
@@ -163,6 +196,12 @@ if (args.Contains("--video-4k-checks"))
 if (args.Contains("--video-quality-checks") || args.Contains("--video-144-checks"))
 {
     await QualityChecks.RunAsync(args.Last(), args.Contains("--video-144-checks") ? 144 : 60);
+    return;
+}
+if (args.Contains("--display-identities"))
+{
+    foreach (var output in await WaylandOutputRefresh.ReadDetailsAsync())
+        Console.WriteLine($"output={output.Id};key={output.Key};name={output.Name};refresh-millihz={output.RefreshMilliHz}");
     return;
 }
 if (args.Contains("--display-refresh-checks"))
@@ -224,18 +263,20 @@ var highRate = new HostVideoSettings([(1920,1080)]);
 Check(highRate.Apply(new(0,1920,1080,144,5,0,0,null)) && highRate.Get(0).Fps == 144, "144 FPS request reaches video profile without a 60 FPS clamp");
 Check(highRate.Apply(new(0,1920,1080,120,5,0,0,null)) && highRate.Get(0).Fps == 120, "explicit 120 FPS remains supported");
 Check(highRate.Apply(new(0,1920,1080,240,5,0,0,null)) && highRate.Get(0).Fps == 144, "requests above supported range are bounded");
-var congested = new HostVideoSettings([(1920, 1080)]);
+long feedbackTime=0;
+var congested = new HostVideoSettings([(1920, 1080)],clock:()=>feedbackTime);
 var beforeLoss = congested.Get(0);
 Check(congested.ObserveReceiver(15079, 1325, 19), "receiver packet loss triggers recovery");
 Check(congested.Get(0).Bitrate < beforeLoss.Bitrate && congested.Get(0).Recovery == 1, "recovery lowers bitrate and restarts encoder for an IDR");
 var afterLoss = congested.Get(0);
 Check(!congested.ObserveReceiver(15079, 1325, 19) && congested.Get(0) == afterLoss, "duplicate receiver counters do not trigger recovery");
+feedbackTime+=5000;
 Check(congested.ObserveReceiver(29938, 3606, 19), "stalled decoder with arriving packets triggers recovery");
 Check(!congested.ObserveReceiver(10, 0, 1), "reset counters establish a new baseline");
 
-var constrained = new HostVideoSettings([(1920,1080)]);
+var constrained = new HostVideoSettings([(1920,1080)],clock:()=>feedbackTime);
 long recv=0, loss=0, frames=0;
-for (var n=0;n<8;n++) constrained.ObserveReceiver(recv+=1000,loss+=100,frames+=10);
+for (var n=0;n<8;n++) { feedbackTime+=5000; constrained.ObserveReceiver(recv+=1000,loss+=100,frames+=10); }
 var floor = constrained.Get(0);
 Check(floor.Bitrate==1000000 && !constrained.ObserveReceiver(recv+=1000,loss+=100,frames+=10)
     && constrained.Get(0)==floor, "loss at floor does not restart advancing decoder");
@@ -292,6 +333,50 @@ Check(units.Count == 2 && units[0].Length == 11 && units[1].Length == 11, "AUD p
 // Legacy capture config: screen 1, 1920x1080, 30fps, high quality.
 var config = HostCaptureProtocol.Decode([0x08, 7, 0x4a, 12, 0x10, 1, 0x18, 3, 0x28, 1, 0x30, 0x80, 0x0f, 0x38, 0xb8, 0x08]);
 Check(config is { Screen: 1, Width: 1920, Height: 1080, Fps: 30, Quality: 3, Sequence: 7 }, "official capture config fields");
+var paced = new HostVideoSettings([(2560, 1440), (3840, 2160)], frameRateLimits: [60, 60]);
+Check(paced.Get(0).Fps == 60 && paced.Get(1).Fps == 60 && paced.DisplayFps(0) == 60 && paced.DisplayFps(1) == 60,
+    "session target starts at each display rate with no 30 FPS cap");
+Check(paced.OutputFps(0) == 60 && paced.OutputFps(1) == 60,
+    "changing content on every screen starts at the display target");
+Check(paced.Apply(new(0, 2560, 1440, 60, 2, 1, 0, 1))
+    && paced.RequestedFps(0) == 60 && paced.Get(0).Fps == 60
+    && paced.OutputFps(0) == 60 && paced.OutputFps(1) == 60,
+    "naming one screen does not drop another screen while its content is changing");
+Check(paced.OutputFps(0) == 60
+    && paced.OutputFps(1) == 60,
+    "a static screen keeps its full target rate for low-latency interaction");
+Check(paced.Apply(new(0, 0, 0, 30, 0, 1, 0, 1)) && paced.Get(0).Fps == 30 && paced.RequestedFps(0) == 30
+    && paced.OutputFps(0) == 30, "a lower requested rate is the target and is not raised");
+Check(paced.Apply(new(0, 0, 0, 120, 0, 1, 0, 1)) && paced.Get(0).Fps == 60 && paced.RequestedFps(0) == 60,
+    "target is min(display refresh, requested fps) and never exceeds the display");
+var placeholderSize = new HostVideoSettings([(1920, 1080)]);
+placeholderSize.AdoptSourceSize(0, 3840, 2160);
+Check(placeholderSize.Get(0) is { Width: 3840, Height: 2160, Recovery: 1 },
+    "a real first frame replaces the placeholder size and restarts the encoder");
+Check(placeholderSize.Apply(new(0, 2560, 1440, 0, 0, 1, 0, 1)) && placeholderSize.Get(0).Width == 2560,
+    "an explicit controller size replaces the adopted frame size");
+placeholderSize.AdoptSourceSize(0, 3840, 2160);
+Check(placeholderSize.Get(0).Width == 2560,
+    "an explicit controller size is kept when another real frame arrives");
+var dualModes = new HostVideoSettings([(3840, 2160), (3840, 2160)], frameRateLimits: [60, 60]);
+dualModes.BindCeiling(0, 2560, 1440);
+dualModes.BindCeiling(1, 3840, 2160);
+Check(dualModes.Get(0) is { Width: 2560, Height: 1440, Fps: 60 } && dualModes.Get(1) is { Width: 3840, Height: 2160 },
+    "each screen ceiling replaces a stale 4K profile without touching the other screen");
+Check(dualModes.RejectsSourceSize(0, 3840, 2160) && !dualModes.RejectsSourceSize(1, 3840, 2160)
+    && !dualModes.RejectsSourceSize(0, 2560, 1440),
+    "a 4K buffer is foreign on the 1440p screen and native on the 4K screen");
+dualModes.AdoptSourceSize(0, 3840, 2160);
+dualModes.AdoptSourceSize(0, 1970, 1108);
+Check(dualModes.Get(0) is { Width: 2560, Height: 1440 },
+    "neither a foreign 4K frame nor a logical-size buffer replaces the 1440p mode");
+Check(dualModes.Apply(new(0, 3840, 2160, 30, 2, 1, 0, 1))
+    && dualModes.Get(0) is { Width: 2560, Height: 1440, Fps: 30 }
+    && dualModes.Get(1) is { Width: 3840, Height: 2160, Fps: 60 },
+    "a controller 4K request is clamped to that screen and does not retarget the other track");
+dualModes.AdoptSourceSize(0, 3840, 2160);
+Check(dualModes.Get(0).Width == 2560,
+    "the clamped screen stays at its mode after another 4K buffer");
 var profiles = new HostVideoSettings([(2560, 1440), (1920, 1080)]);
 Check(profiles.Apply(new(-2, -1, -1, 60, 2, 1, 0, 1))
     && profiles.Get(0) is { Width: 2560, Height: 1440, Fps: 60, Crf: 23 }

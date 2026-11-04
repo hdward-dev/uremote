@@ -43,6 +43,7 @@ public sealed class WaylandVirtualKeyboard : IDesktopKeyboard
         (75,98,"KP_Divide","KP_Divide"),(76,96,"KP_Enter","KP_Enter"),(78,74,"KP_Subtract","KP_Subtract")
     ];
     public static uint? LinuxKey(int mac) => Keys.Where(k => k.Mac == mac).Select(k => (uint?)k.Linux).FirstOrDefault();
+    internal static IReadOnlyList<(int Mac, uint Linux, string Lower, string Upper)> Layout => Keys;
     public static string Keymap()
     {
         var b = new StringBuilder("xkb_keymap { xkb_keycodes \"uremote\" { minimum=8; maximum=255;");

@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:URemote.Module"
+             x:Class="URemote.Module.DeviceDetailView"
+             x:DataType="local:DeviceDetailModel"
+             x:CompileBindings="True">
+  <Border Classes="ad-card" Padding="20">
+    <StackPanel Spacing="10">
+      <TextBlock Text="{Binding Name}" FontSize="18" Foreground="{DynamicResource AppStrongTextBrush}"/>
+      <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource AppStrongTextBrush}"/>
+      <TextBlock Text="{Binding Identifier}" FontSize="12" Classes="ad-muted"/>
+      <TextBlock Text="{Binding Version}" FontSize="12" Classes="ad-muted"/>
+      <TextBlock Text="{Binding Description}" FontSize="13" TextWrapping="Wrap" Classes="ad-muted"/>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button x:Name="copyButton" Content="复制设备编号" Click="Copy_Click"/>
+        <Button Content="收起" Click="Close_Click"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

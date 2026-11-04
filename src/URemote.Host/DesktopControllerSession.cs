@@ -7,15 +7,19 @@ namespace URemote.Host;
 
 public sealed class DesktopControllerSession
 {
+    private readonly object displayGate = new();
     private ControllerMediaPeer? peer;
     private int display;
     private int quality = 5;
+    private RemoteScreen[]? advertised;
+    private bool listedFromProtobuf;
+    private string publishedDisplays = "";
     public event Action<string>? Status;
     public event Action<int>? TargetPlatform;
     public event Action<string, byte[]>? DataReceived;
     public bool SendData(string channel, byte[] bytes) => peer?.SendData(channel, bytes) ?? false;
     public event Action<int, ControllerFrame>? Frame;
-    public event Action<int[]>? Displays;
+    public event Action<IReadOnlyList<RemoteScreen>>? Displays;
     public bool SendInput(string json) => peer?.SendInput(json, Volatile.Read(ref display)) ?? false;
     public void SetQuality(int level)
     {
@@ -24,11 +28,12 @@ public sealed class DesktopControllerSession
         peer?.SetQuality(level);
     }
     public void SelectDisplay(int id) { Volatile.Write(ref display, id); peer?.SelectDisplay(id, Volatile.Read(ref quality)); }
-    public async Task RunAsync(LoginState state, string target, string ffmpeg, CancellationToken ct, int captureType = 1, AssistanceRequest? assistance = null)
+    public async Task RunAsync(LoginState state, string target, string ffmpeg, CancellationToken ct, int captureType = 1, AssistanceRequest? assistance = null, bool forceJoin = false)
     {
         using var api = new UuMacHostApi(state);
         var joined = false;
         var decoders = new Dictionary<int, ControllerVideoDecoder>();
+        lock (displayGate) { advertised = null; listedFromProtobuf = false; publishedDisplays = ""; }
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? candidatesTask = null;
@@ -44,7 +49,7 @@ public sealed class DesktopControllerSession
                 var assistanceRoom = await api.JoinAssistanceAsync(assistance.ConnectId, assistance.TakeCode(), deadline.Token);
                 joined = true; room = assistanceRoom.Room; TargetPlatform?.Invoke(assistanceRoom.Platform);
             }
-            else { room = await api.JoinDeviceAsync(target, ct); joined = true; }
+            else { room = await api.JoinDeviceAsync(target, ct, forceJoin); joined = true; }
             Status?.Invoke("signaling");
             await using var signal = await UuSignalClient.ConnectAsync(room, ct);
             var appId = Guid.NewGuid().ToString(); var initialIce = Guid.NewGuid().ToString();
@@ -76,6 +81,7 @@ public sealed class DesktopControllerSession
             media.Video += (index, bytes) =>
             {
                 if (stop.IsCancellationRequested || index is < 0 or > 4) return;
+                int[]? opened = null;
                 lock (decoders)
                 {
                     if (!decoders.TryGetValue(index, out var decoder))
@@ -83,13 +89,14 @@ public sealed class DesktopControllerSession
                         try { decoder = new ControllerVideoDecoder(ffmpeg); }
                         catch { done.TrySetException(new IOException("Could not start video decoder.")); return; }
                         decoders[index] = decoder; Status?.Invoke("video-stream-received");
-                        decoder.Failed += () => done.TrySetException(new IOException("Video decoder stopped."));
+                        decoder.Failed += detail => done.TrySetException(new IOException(string.IsNullOrWhiteSpace(detail) ? "Video decoder stopped." : "Video decoder stopped: " + detail));
                         var firstFrame = true;
                         decoder.Frame += frame => { if (firstFrame) { firstFrame = false; Status?.Invoke("video-decoded"); } if (!stop.IsCancellationRequested) Frame?.Invoke(index, frame); };
-                        Displays?.Invoke(decoders.Keys.Order().ToArray());
+                        opened = decoders.Keys.Order().ToArray();
                     }
                     decoder.Push(bytes);
                 }
+                if (opened is not null) PublishTracks(opened);
             };
             Status?.Invoke("negotiating");
             var offer = await media.OfferAsync(ct);
@@ -126,7 +133,15 @@ public sealed class DesktopControllerSession
                     if (!await available) throw new IOException("Signaling ended.");
                     while (signal.Events.TryRead(out var item))
                     {
-                        if (item.Packet?.Data is not JsonArray parts || parts.Count < 2 || parts[0]?.GetValue<string>() != "soac" || parts[1] is not JsonObject p || p["data"] is not JsonObject data) continue;
+                        if (item.Packet?.Data is not JsonArray parts || parts.Count < 2 || parts[1] is not JsonObject p) continue;
+                        if (parts[0]?.GetValue<string>() == "forward_setting")
+                        {
+                            try { ReadAdvertisedDisplays(item, p, id.IceId); }
+                            catch (Exception e) when (e is FormatException or InvalidDataException or System.Text.Json.JsonException)
+                            { Status?.Invoke("remote-displays-rejected"); }
+                            continue;
+                        }
+                        if (parts[0]?.GetValue<string>() != "soac" || p["data"] is not JsonObject data) continue;
                         if (data["app_control_id"]?.GetValue<string>() is { } aid && aid != appId || data["ice_id"]?.GetValue<string>() is { } ice && ice != id.IceId) continue;
                         switch (data["type"]?.GetValue<string>())
                         {
@@ -149,6 +164,61 @@ public sealed class DesktopControllerSession
         }
     }
 
+    private void PublishTracks(IReadOnlyList<int> tracks)
+    {
+        RemoteScreen[] list;
+        lock (displayGate)
+        {
+            if (advertised is { Length: > 0 }) return;
+            list = tracks.Order().Select(index => new RemoteScreen(index, index)).ToArray();
+        }
+        RaiseDisplays(list, fallback: true);
+    }
+    private void NoteDisplays(IReadOnlyList<RemoteScreen> screens, bool protobuf)
+    {
+        var list = screens.Take(5).ToArray();
+        if (list.Length == 0) return;
+        lock (displayGate) { if (protobuf) listedFromProtobuf = true; advertised = list; }
+        RaiseDisplays(list, fallback: false);
+    }
+    private void RaiseDisplays(RemoteScreen[] list, bool fallback)
+    {
+        if (list.Length == 0) return;
+        var key = string.Join(",", list.Select(screen => screen.Id + ":" + screen.VideoTrack));
+        lock (displayGate)
+        {
+            if (fallback && advertised is { Length: > 0 }) return;
+            if (key == publishedDisplays) return;
+            publishedDisplays = key;
+        }
+        Status?.Invoke("remote-displays=" + key);
+        Displays?.Invoke(list);
+    }
+    private void ReadAdvertisedDisplays(UuSignalFrame item, JsonObject payload, string iceId)
+    {
+        if (payload["data"] is not JsonObject data) return;
+        if (data["type"] is not JsonValue typeNode || !typeNode.TryGetValue<string>(out var type)) return;
+        if (type == "signal_app_data")
+        {
+            if (data["signal_app_data"] is not JsonObject info) return;
+            if (info["ice_id"] is JsonValue iceNode && iceNode.TryGetValue<string>(out var ice) && !string.IsNullOrEmpty(ice) && ice != iceId) return;
+            if (info["binary_data"] is not JsonObject binary) return;
+            var screens = HostDisplayInfo.Read(HostSignalSessions.Binary(item, binary));
+            if (screens.Count > 0) NoteDisplays(screens, protobuf: true);
+            return;
+        }
+        if (type != "device_capability" || listedFromProtobuf) return;
+        if (data["device_capability"]?["display_info"] is not JsonArray infos) return;
+        var list = new List<RemoteScreen>();
+        foreach (var node in infos)
+        {
+            if (list.Count == 5) break;
+            if (node is not JsonObject screen || screen["id"] is not JsonValue idNode || !idNode.TryGetValue<int>(out var id) || id is < 0 or > 4) continue;
+            if (list.Any(existing => existing.Id == id)) continue;
+            list.Add(new(id, id));
+        }
+        if (list.Count > 0) NoteDisplays(list, protobuf: false);
+    }
     private async Task RunClipboardAsync(ControllerMediaPeer media, CancellationToken ct)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -66,10 +66,10 @@ public sealed class HostFileTransfer : IAsyncDisposable
         using var output=new MemoryStream();var buffer=new byte[8192];int n;
         while((n=zip.Read(buffer))>0) { if(output.Length+n>524288)throw new FormatException("File list exceeds limit.");output.Write(buffer,0,n); } return output.ToArray();
     }
-    private static byte[] Compress(byte[] data)
+    private static byte[] Compress(byte[] data, CompressionLevel level = CompressionLevel.Fastest)
     {
         using var output=new MemoryStream();
-        using(var zip=new ZLibStream(output,CompressionLevel.Fastest,true))zip.Write(data);
+        using(var zip=new ZLibStream(output,level,true))zip.Write(data);
         return output.ToArray();
     }
     private static byte[] Metadata(FileSpec file) => Join(Text(1,file.Name),Int(2,(ulong)file.Size),Int(3,file.Modified));
@@ -154,15 +154,23 @@ public sealed class HostFileTransfer : IAsyncDisposable
         // UU's virtual root is a navigation page of volumes/folders. iOS
         // treats its entries as directory destinations, even for a file type.
         if(remote==":/")entries.Add(Blob(3,Join(Int(1,0),Text(2,"uurc"),Text(5,"/"),Text(6,"folder"))));
-        foreach(var entry in remote==":/" ? Enumerable.Empty<FileSystemInfo>() : new DirectoryInfo(path).EnumerateFileSystemInfos().OrderBy(x=>x.Name).Take(4096))
+        foreach(var entry in remote==":/" ? Enumerable.Empty<FileSystemInfo>() : new DirectoryInfo(path).EnumerateFileSystemInfos().OrderBy(x=>x.Name).Take(4097))
         {
             if((entry.Attributes&FileAttributes.ReparsePoint)!=0 || entry.Name.StartsWith(".uremote-",StringComparison.Ordinal))continue;
             var dir=entry is DirectoryInfo;var full="/"+Path.GetRelativePath(root,entry.FullName).Replace('\\','/');
             var encoded=Blob(3,Join(Int(1,dir?0UL:4UL),Text(2,entry.Name),Int(3,dir?0UL:(ulong)((FileInfo)entry).Length),Int(4,(ulong)new DateTimeOffset(entry.LastWriteTimeUtc).ToUnixTimeSeconds()),Text(5,full),Text(6,dir?"folder":"file")));
-            bytes+=encoded.Length;if(bytes>110000)break;entries.Add(encoded);
+            bytes+=encoded.Length;
+            if(bytes>524000 || entries.Count>=4096) { report("file-directory-too-large"); throw new FormatException("Directory list exceeds response limit."); }
+            entries.Add(encoded);
         }
-        var compressed=Compress(Join(entries.Select(x=>Blob(1,Data(x,3))).ToArray()));
-        Reply(request,7,Join(new[]{Id(TaskId(request.Body)),Text(2,remote),Int(4,1),Blob(5,compressed)}.Concat(entries).ToArray()));report("file-directory-listed;count="+entries.Count);
+        var compressed=Compress(Join(entries.Select(x=>Blob(1,Data(x,3))).ToArray()),CompressionLevel.Optimal);
+        var header = new[]{Id(TaskId(request.Body)),Text(2,remote),Int(4,1),Blob(5,compressed)};
+        var body = Join(header.Concat(entries).ToArray());
+        report($"file-directory-packet;entries={entries.Count};raw={bytes};compressed={compressed.Length};combined={body.Length}");
+        if(Encode(true,request.RequestId,7,body).Length>131072) body=Join(header);
+        if(Encode(true,request.RequestId,7,body).Length>131072)
+        { report("file-directory-too-large"); throw new FormatException("Directory list exceeds response limit."); }
+        Reply(request,7,body);report("file-directory-listed;count="+entries.Count);
     }
     private void Receive(TransferMessage request)
     {

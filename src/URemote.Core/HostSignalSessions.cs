@@ -56,7 +56,7 @@ public sealed class HostSignalSessions
             var key = (clientId, iceId);
             if (name == "be-controlled")
             {
-                var id = new HostPeerId(clientId, iceId, RequiredString(payload, "app_control_id"));
+                var id = new HostPeerId(clientId, iceId, ControlId(payload));
                 if (peers.TryGetValue(key, out var existing))
                 {
                     if (existing.Id != id) throw new FormatException("Conflicting peer identity.");
@@ -131,7 +131,50 @@ public sealed class HostSignalSessions
     }
 
     public void Remove(HostPeerId id) { lock (gate) peers.Remove((id.ClientId, id.IceId)); }
+    // A replacement control id shares the client and ICE key. Do not delete that newer session.
+    public bool RemoveIfMatch(HostPeerId id)
+    {
+        lock (gate)
+        {
+            if (!peers.TryGetValue((id.ClientId, id.IceId), out var peer) || peer.Id != id) return false;
+            peers.Remove((id.ClientId, id.IceId));
+            return true;
+        }
+    }
     public void Reset() { lock (gate) peers.Clear(); }
+    // The publisher event usually carries a string app_control_id. A retry after the media
+    // peer died can leave that field null or numeric and keep the id only inside streamer_data.
+    internal static string ControlId(JsonObject payload)
+    {
+        if (TryScalarId(payload["app_control_id"], out var id)) return id;
+        if (payload["streamer_data"] is JsonValue streamer && streamer.TryGetValue<string>(out var json) && json.Length is > 0 and <= 65536)
+        {
+            try
+            {
+                if (JsonNode.Parse(json) is JsonObject obj
+                    && (TryScalarId(obj["control_id"], out id) || TryScalarId(obj["app_control_id"], out id)))
+                    return id;
+            }
+            catch (System.Text.Json.JsonException) { }
+        }
+        throw new FormatException("Missing or invalid peer protocol field.") { Data = { ["field"] = "app_control_id" } };
+    }
+    private static bool TryScalarId(JsonNode? node, out string id)
+    {
+        id = "";
+        if (node is not JsonValue value) return false;
+        if (value.TryGetValue<string>(out var text))
+        {
+            if (string.IsNullOrEmpty(text) || text.Length > 4096) return false;
+            id = text;
+            return true;
+        }
+        long number;
+        if (value.TryGetValue<int>(out var integer)) number = integer;
+        else if (!value.TryGetValue<long>(out number)) return false;
+        id = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return id.Length is > 0 and <= 4096;
+    }
     private static string RequiredString(JsonObject data, string key)
     {
         if (data[key] is not JsonValue value || !value.TryGetValue<string>(out var text) || string.IsNullOrEmpty(text) || text.Length > 4096)

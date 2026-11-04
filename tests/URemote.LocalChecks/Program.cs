@@ -8,6 +8,7 @@ using URemote.Module;
 using Avalonia.Input;
 
 var passed = 0;
+if (args.Contains("--host-preferences-only")) { HostPreferenceChecks.Run(Check); Console.WriteLine($"PASS: {passed} host preference checks"); return; }
 HistoryChecks.Run(Check);
 if (args.Contains("--history-only")) { Console.WriteLine($"PASS: {passed} history checks"); return; }
 void Check(bool condition, string message)

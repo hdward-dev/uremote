@@ -1,12 +1,12 @@
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Input.Platform;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Threading;
-using Avalonia.Styling;
 using URemote.Core;
 using URemote.Host;
 using URemote.Linux;
@@ -15,14 +15,6 @@ namespace URemote.Module;
 
 public sealed partial class URemoteView
 {
-    private readonly TextBlock hostBadge = new() { Text = "●  正在准备", FontSize = 12 };
-    private readonly TextBlock catalogHint = new() { Text = "登录后，同步你的 UU 账号设备", TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock transferState = new() { Text = "接收和取出仅限此文件夹", TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock accountState = new() { Text = "正在读取账号状态" };
-    private readonly SelectableTextBlock accountIdentity = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false };
-    private readonly TextBlock accountHeading = new() { FontSize = 16, FontWeight = FontWeight.SemiBold };
-    private readonly TextBlock accountDescription = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock logoutHint = new() { Text = "退出登录会停止本机被控，并断开本应用的远程连接。", FontSize = 12, TextWrapping = TextWrapping.Wrap, IsVisible = false };
     private void UpdateAccountDisplay(SavedHostIdentity? saved)
     {
         var authenticated = saved?.State.IsAuthenticated == true;
@@ -36,23 +28,9 @@ public sealed partial class URemoteView
         logoutHint.IsVisible = authenticated;
         logout.IsVisible = authenticated; loginPanel.IsVisible = !authenticated;
     }
-    private readonly TextBlock catalogCount = new() { Text = "我的设备", FontSize = 22, FontWeight = FontWeight.SemiBold };
-    private readonly TextBox search = new() { PlaceholderText = "搜索设备名称、平台或编号", MinWidth = 160 };
-    private readonly ComboBox filter = new() { ItemsSource = new[] { "全部设备", "在线设备", "我的收藏", "电脑", "移动设备" }, SelectedIndex = 0, Width = 130 };
-    private readonly Button refresh = new() { Content = "刷新设备" };
-    private readonly DeviceCardWrap deviceRows = new()
-    {
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        MinItemWidth = 380,
-        MaxItemWidth = 640,
-        ItemSpacing = 16,
-        LineSpacing = 16
-    };
+    private int _hostPanelPlacement;
     private bool listView;
     private int deviceTab;
-    private readonly StackPanel deviceDetail = new() { Spacing = 10, IsVisible = false };
-    private readonly ContentControl page = new();
-    private readonly StackPanel advancedSettings = new() { Spacing = 12 };
     private readonly List<Button> navigation = [];
     private string? selectedDeviceId;
     private readonly Dictionary<string, RemoteDesktopWindow> remoteWindows = [];
@@ -66,192 +44,143 @@ public sealed partial class URemoteView
 
     private static void ApplyTheme(AvaloniaObject target, AvaloniaProperty property, string key) =>
         target.Bind(property, new DynamicResourceExtension(key));
-    private static TextBlock Text(string value, double size = 13, bool muted = false)
+    private static void SetClass(Control control, string name, bool on)
     {
-        var text = new TextBlock { Text = value, FontSize = size, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
-        ApplyTheme(text, TextBlock.ForegroundProperty, muted ? "AppMutedBrush" : "AppStrongTextBrush"); return text;
+        if (on) { if (!control.Classes.Contains(name)) control.Classes.Add(name); }
+        else control.Classes.Remove(name);
     }
-    private static Border Card(Control child, int padding = 20)
+    private void WireShell(string dataDirectory)
     {
-        var border = new Border { Child = child, Padding = new Thickness(padding), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1) };
-        ApplyTheme(border, Border.BackgroundProperty, "AppSurfaceBrush"); ApplyTheme(border, Border.BorderBrushProperty, "AppBorderBrush"); return border;
-    }
-    private void BuildInterface(string dataDirectory)
-    {
-        Resources.ThemeDictionaries[ThemeVariant.Light] = new ResourceDictionary {
-            ["AppAccentBrush"] = new SolidColorBrush(Color.Parse("#008D82")),
-            ["AppAccentSurfaceBrush"] = new SolidColorBrush(Color.Parse("#E1F2EF")) };
-        Resources.ThemeDictionaries[ThemeVariant.Dark] = new ResourceDictionary {
-            ["AppAccentBrush"] = new SolidColorBrush(Color.Parse("#43CEB9")),
-            ["AppAccentSurfaceBrush"] = new SolidColorBrush(Color.Parse("#173F3A")) };
-        FontFamily = new FontFamily(OperatingSystem.IsLinux() ? "Noto Sans CJK SC" : "Segoe UI");
-        Styles.Add(new Style(x => x.OfType<TextBlock>()) { Setters = { new Setter(TextBlock.FontFamilyProperty, FontFamily) } });
         favoriteFile = Path.Combine(dataDirectory, "device-favorites.json");
         try { if (File.Exists(favoriteFile)) favorites = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(favoriteFile)) ?? []; }
         catch (Exception e) when (e is IOException or JsonException) { }
-        ApplyTheme(this, BackgroundProperty, "AppPageBrush");
-        ApplyTheme(status, TextBlock.ForegroundProperty, "AppStrongTextBrush"); status.FontSize = 19; status.TextWrapping = TextWrapping.Wrap;
-        ApplyTheme(detail, TextBlock.ForegroundProperty, "AppMutedBrush"); detail.FontSize = 13;
+        metrics.FontSize = 12; metrics.Text = OperatingSystem.IsMacOS() ? "多屏桌面 · 键鼠控制" : "双屏桌面 · 远程终端";
+        ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush");
         detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text);
         detail.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) detail.IsVisible = !string.IsNullOrWhiteSpace(detail.Text); };
-        ApplyTheme(metrics, TextBlock.ForegroundProperty, "AppMutedBrush"); metrics.FontSize = 12; metrics.Text = OperatingSystem.IsMacOS() ? "多屏桌面 · 键鼠控制" : "双屏桌面 · 远程终端";
-        ApplyTheme(hostBadge, TextBlock.ForegroundProperty, "AppPositiveBrush");
         status.PropertyChanged += (_, e) => { if (e.Property == TextBlock.TextProperty) UpdateHostBadge(); };
-        var brand = new StackPanel { Spacing = 5, Margin = new Thickness(14, 12, 0, 30), Children = { Text("U远程", 25), Text("远程工作空间", 12, true) } };
-        var tabs = new StackPanel { Spacing = 8 };
-        foreach (var item in new[] { ("我的设备", "▤", 0), ("本机被控", "▣", 1), ("账号与设置", "⚙", 2), ("远程协助", "♧", 3), ("文件传输", "⇄", 4), ("本地连接", "▱", 5) })
+        screens.ItemsSource = outputs;
+        localScreens.ItemsSource = localScreenItems;
+        localHistoryRows.ItemsSource = historyItems;
+        navigation.AddRange([navDevices, navHost, navAccount, navAssist, navFiles, navLocal]);
+        pages = [devicePage, hostPage, accountPage, assistancePage, filePage, localPage];
+        hostIntro.Text = $"在其他设备的 UU 官方客户端中，选择「{LinuxDeviceProfile.DeviceName}」连接。";
+        footerText.Text = $"U远程 · 星栈远程控制插件  |  桌面环境：{DesktopEnvironmentInfo.Current.DisplayName}";
+        desktopEnvironment.Text = DesktopEnvironmentInfo.Current.DisplayName;
+        transferPath.Text = HostTransferPaths.SharedDirectory;
+        search.TextChanged += (_, _) => RenderDevices();
+        filter.SelectionChanged += (_, _) => RenderDevices();
+        accountPage.SizeChanged += (_, e) =>
         {
-            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { Text(item.Item2, 18), Text(item.Item1, 14) } };
-            var button = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 13), CornerRadius = new CornerRadius(9) };
-            button.Click += (_, _) => ShowPage(item.Item3); navigation.Add(button);
-        }
-        foreach (var i in new[] { 0, 5, 1, 3, 4 }) tabs.Children.Add(navigation[i]);
-        var sidebar = new DockPanel { Margin = new Thickness(12) };
-        DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
-        DockPanel.SetDock(navigation[2], Dock.Bottom); sidebar.Children.Add(navigation[2]); sidebar.Children.Add(tabs);
-        var toolbar = new Grid { ColumnDefinitions = new("*,Auto,Auto,Auto"), ColumnSpacing = 8 };
-        search.PlaceholderText = "搜索设备名称"; filter.Width = 112; refresh.Content = "刷新";
-        toolbar.Children.Add(search); Grid.SetColumn(filter, 1); toolbar.Children.Add(filter); Grid.SetColumn(refresh, 2); toolbar.Children.Add(refresh);
-        var viewMode = new Button { Content = "列表", MinWidth = 50 };
-        viewMode.Click += (_, _) => { listView = !listView; viewMode.Content = listView ? "网格" : "列表"; RenderDevices(); };
-        Grid.SetColumn(viewMode, 3); toolbar.Children.Add(viewMode);
-        ApplyTheme(catalogCount, TextBlock.ForegroundProperty, "AppStrongTextBrush"); catalogCount.FontSize = 28;
-        ApplyTheme(catalogHint, TextBlock.ForegroundProperty, "AppMutedBrush"); catalogHint.FontSize = 12;
-        var deviceTabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        foreach (var (title, index) in new[] { ("全部设备", 0), ("收藏", 1) })
-        {
-            var button = new Button { Content = title, Padding = new Thickness(16, 8), CornerRadius = new CornerRadius(18) };
-            button.Click += (_, _) => { deviceTab = index; foreach (var child in deviceTabs.Children.OfType<Button>()) ApplyTheme(child, Button.BackgroundProperty, child == button ? "AppAccentSurfaceBrush" : "AppSurfaceBrush"); RenderDevices(); };
-            ApplyTheme(button, Button.BackgroundProperty, index == 0 ? "AppAccentSurfaceBrush" : "AppSurfaceBrush"); deviceTabs.Children.Add(button);
-        }
-        var devicePage = new StackPanel { Spacing = 16, Children = { catalogCount, catalogHint, toolbar, deviceTabs, deviceDetail, deviceRows,
-            Text("预览为设备上传的桌面壁纸，非实时画面。远程控制将在独立窗口中打开。", 12, true) } };
-        search.TextChanged += (_, _) => RenderDevices(); filter.SelectionChanged += (_, _) => RenderDevices();
-        refresh.Click += async (_, _) => await RefreshDevicesAsync();
-        duration.HorizontalAlignment = HorizontalAlignment.Stretch;
-        settings.Children.Add(Text("共享哪些屏幕", 16)); settings.Children.Add(screens);
-        settings.Children.Add(new Separator()); settings.Children.Add(Text("连接权限", 16));
-        settings.Children.Add(input); settings.Children.Add(audio); settings.Children.Add(clipboard);
-        settings.Children.Add(Text("保持被控的时长", 13, true)); settings.Children.Add(duration);
-        var hostPage = new StackPanel { Spacing = 16, Children = {
-            Text("本机被控", 22), Text($"在其他设备的 UU 官方客户端中，选择「{LinuxDeviceProfile.DeviceName}」连接。", 13, true), Card(settings),
-            Card(new StackPanel { Spacing = 9, Children = {
-                Text("连接与退出", 16), Text("主控退出后，本机继续等待连接。终端会话会保留，方便再次进入。", 13, true),
-                Text("本机关闭被控开关，或退出 AsterDock，将结束共享与终端会话。修改共享权限前，请先关闭被控开关。", 13, true) } }) } };
-        loginPanel.MaxWidth = 440; loginPanel.HorizontalAlignment = HorizontalAlignment.Left;
-        loginPanel.Children.Add(Text("手机号", 13));
-        var phoneRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 10 }; phoneRow.Children.Add(mobile); Grid.SetColumn(sendCode, 1); phoneRow.Children.Add(sendCode);
-        loginPanel.Children.Add(phoneRow); loginPanel.Children.Add(Text("短信验证码", 13)); loginPanel.Children.Add(code); loginPanel.Children.Add(completeLogin);
-        completeLogin.HorizontalAlignment = HorizontalAlignment.Stretch;
-        ApplyTheme(completeLogin, Button.BackgroundProperty, "AppAccentBrush"); completeLogin.Foreground = Brushes.White;
-        loginPanel.Children.Add(Text("验证码仅用于本次登录。点击“发送验证码”后才会发送短信。", 12, true));
-        advancedSettings.Children.Add(Text("本机登录文件", 13, true)); advancedSettings.Children.Add(identity);
-        advancedSettings.Children.Add(Text("视频编码器", 13, true)); advancedSettings.Children.Add(encoder);
+            var compact = e.NewSize.Width < 440;
+            accountHeadingGrid.ColumnDefinitions = new(compact ? "Auto,*" : "Auto,*,Auto");
+            accountHeadingGrid.RowDefinitions = new(compact ? "Auto,Auto" : "Auto");
+            Grid.SetColumn(logout, compact ? 1 : 2); Grid.SetRow(logout, compact ? 1 : 0);
+            logout.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            logout.Margin = new Thickness(0, compact ? 12 : 0, 0, 0);
+        };
         BuildEncoderSettings();
-        var accountPage = BuildAccountPage();
-        var assistancePage = BuildConnectAssistancePage();
-        pages = [devicePage, hostPage, accountPage, assistancePage, new StackPanel { Spacing = 16, Children = { Text("文件传输", 26), BuildFileTransferCard() } }, BuildLocalConnectionPage(dataDirectory)];
-        var hostActions = new Grid { ColumnDefinitions = new("*,Auto"), Margin = new Thickness(0, 2) };
-        hostActions.Children.Add(Text("允许本机被控", 14)); Grid.SetColumn(hostSwitch, 1); hostActions.Children.Add(hostSwitch);
-        hostSwitch.MinWidth = 0;
-        var screenLink = new Button { Content = "显示器与共享设置", HorizontalAlignment = HorizontalAlignment.Stretch };
-        screenLink.Click += (_, _) => ShowPage(1);
-        var hostHeading = new Grid { ColumnDefinitions = new("Auto,*") };
-        hostHeading.Children.Add(Text("本机被控", 20));
-        hostBadge.HorizontalAlignment = HorizontalAlignment.Right;
-        hostBadge.VerticalAlignment = VerticalAlignment.Center;
-        hostBadge.Margin = new Thickness(8, 0, 0, 0);
-        hostBadge.TextTrimming = TextTrimming.CharacterEllipsis;
-        Grid.SetColumn(hostBadge, 1); hostHeading.Children.Add(hostBadge);
-        var hostPanel = new StackPanel { Spacing = 8, Margin = new Thickness(14, 12), Children = { hostHeading, hostActions,
-            localScreens, detail, screenLink, new Separator(), Text("让他人协助我", 20), BuildAssistanceCard(), BuildConnectionCard() } };
-        status.FontSize = 14; detail.FontSize = 12;
-        var body = new Grid { ColumnDefinitions = new("300,*,190"), RowDefinitions = new("*,Auto") };
-        var navigationBorder = new Border { Child = sidebar, BorderThickness = new Thickness(1, 0, 0, 0) };
-        ApplyTheme(navigationBorder, Border.BorderBrushProperty, "AppBorderBrush");
-        page.Margin = new Thickness(24);
-        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = page };
-        var hostBorder = new Border { BorderThickness = new Thickness(0, 0, 1, 0), Child = new ScrollViewer { Content = hostPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled } };
-        ApplyTheme(hostBorder, Border.BorderBrushProperty, "AppBorderBrush"); ApplyTheme(hostBorder, Border.BackgroundProperty, "AppSurfaceBrush");
-        body.Children.Add(hostBorder); Grid.SetColumn(scroll, 1); body.Children.Add(scroll); Grid.SetColumn(navigationBorder, 2); body.Children.Add(navigationBorder);
-        var footer = new Border { Padding = new Thickness(18, 8), BorderThickness = new Thickness(0, 1, 0, 0), Child = Text($"U远程 · 星栈远程控制插件  |  桌面环境：{DesktopEnvironmentInfo.Current.DisplayName}", 11, true) };
-        ApplyTheme(footer, Border.BorderBrushProperty, "AppBorderBrush"); Grid.SetRow(footer, 1); Grid.SetColumnSpan(footer, 3); body.Children.Add(footer);
-        Content = body;
+        WireAssistanceCard();
+        WireConnectionCard();
+        WireAssistanceConnect();
+        InitializeLocalConnection(dataDirectory);
         SizeChanged += (_, e) =>
         {
             var wide = e.NewSize.Width >= 1150;
-            body.ColumnDefinitions = new(wide ? "300,*,190" : "270,*,150");
-            page.Margin = new Thickness(wide ? 24 : 14);
-            if (e.NewSize.Width < 850)
+            var narrow = e.NewSize.Width < 850;
+            body.ColumnDefinitions = new(narrow ? "0,*,130" : wide ? "300,*,190" : "270,*,150");
+            page.Margin = new Thickness(wide && !narrow ? 24 : 14);
+            hostBorder.IsVisible = !narrow;
+            // hostPanel moves between two parents of this same window. Do it after the
+            // current arrange, so the move is not inside the layout pass that raised SizeChanged.
+            var generation = ++_hostPanelPlacement;
+            Dispatcher.UIThread.Post(() =>
             {
-                body.ColumnDefinitions = new("0,*,130"); hostBorder.IsVisible = false;
-                hostPanel.Margin = new Thickness(0);
-                if (!hostPage.Children.Contains(hostPanel)) { if (hostBorder.Child is ScrollViewer rs) rs.Content = null; hostBorder.Child = null; hostPage.Children.Insert(2, hostPanel); }
-            }
-            else
-            {
-                if (hostPage.Children.Contains(hostPanel)) { hostPage.Children.Remove(hostPanel); hostBorder.Child = new ScrollViewer { Content = hostPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }; }
-                hostPanel.Margin = new Thickness(14, 12);
-                hostBorder.IsVisible = true;
-            }
+                if (generation != _hostPanelPlacement) return;
+                if (narrow)
+                {
+                    hostPanel.Margin = new Thickness(0);
+                    if (!hostPage.Children.Contains(hostPanel)) { hostScroll.Content = null; hostPage.Children.Insert(2, hostPanel); }
+                }
+                else
+                {
+                    if (hostPage.Children.Contains(hostPanel)) { hostPage.Children.Remove(hostPanel); hostScroll.Content = hostPanel; }
+                    hostPanel.Margin = new Thickness(14, 12);
+                }
+            }, DispatcherPriority.Background);
         };
         ShowPage(0); RenderDevices();
         try { UpdateAccountDisplay(DesktopHostSession.ReadIdentity(identity.Text ?? "")); }
         catch { UpdateAccountDisplay(null); }
-        deviceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+        deviceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
         deviceTimer.Tick += async (_, _) => { if (IsVisible && page.Content == pages[0] && Environment.GetEnvironmentVariable("UREMOTE_NO_AUTO_START") != "1") await RefreshDevicesAsync(); };
         deviceTimer.Start();
     }
-    private Control BuildFileTransferCard()
+    private void Nav_Click(object? sender, RoutedEventArgs e)
     {
-        var open = new Button { Content = "打开接收目录" };
-        open.Click += (_, _) => {
-            try {
-                Directory.CreateDirectory(HostTransferPaths.SharedDirectory);
-                var launch = new System.Diagnostics.ProcessStartInfo("xdg-open") { UseShellExecute = false };
-                launch.ArgumentList.Add(HostTransferPaths.SharedDirectory); System.Diagnostics.Process.Start(launch)?.Dispose();
-            } catch { transferState.Text = "无法打开目录，请手动打开下方路径。"; }
-        };
-        var add = new Button { Content = "添加待取文件" };
-        add.Click += async (_, _) => {
-            if (TopLevel.GetTopLevel(this)?.StorageProvider is not { } storage) return;
-            var files = await storage.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions { Title = "选择供 UU 官方客户端取出的文件", AllowMultiple = true });
-            if (files.Count == 0) return; add.IsEnabled = false;
-            try {
-                Directory.CreateDirectory(HostTransferPaths.SharedDirectory);
-                foreach (var file in files) {
-                    var name = Path.GetFileName(file.Name); var target = Path.Combine(HostTransferPaths.SharedDirectory, name);
-                    if (File.Exists(target)) target = Path.Combine(HostTransferPaths.SharedDirectory, Path.GetFileNameWithoutExtension(name) + "-" + Guid.NewGuid().ToString("N")[..8] + Path.GetExtension(name));
-                    var temporary = Path.Combine(HostTransferPaths.SharedDirectory, ".uremote-" + Guid.NewGuid().ToString("N") + ".part");
-                    try {
-                        await using (var source = await file.OpenReadAsync())
-                        await using (var destination = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, true))
-                            await source.CopyToAsync(destination, lifetime.Token);
-                        File.Move(temporary, target, false);
-                    } finally { if (File.Exists(temporary)) File.Delete(temporary); }
-                }
-                transferState.Text = $"已添加 {files.Count} 个文件，可在官方客户端刷新目录后取出。";
-            } catch { transferState.Text = "添加未完成，请检查文件和磁盘空间。"; }
-            finally { add.IsEnabled = true; }
-        };
-        ApplyTheme(transferState, TextBlock.ForegroundProperty, "AppMutedBrush");
-        return Card(new StackPanel { Spacing = 12, Children = {
-            Text("文件传输", 16), Text("通过 UU 官方客户端传入文件，或取出已放入此目录的文件。", 13, true),
-            Text(HostTransferPaths.SharedDirectory, 12, true), transferState,
-            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { open, add } }
-        } });
+        if (sender is Button button && int.TryParse(button.Tag?.ToString(), out var index)) ShowPage(index);
     }
+    private void ScreenLink_Click(object? sender, RoutedEventArgs e) => ShowPage(1);
+    private async void RefreshDevices_Click(object? sender, RoutedEventArgs e) => await RefreshDevicesAsync();
+    private void ViewMode_Click(object? sender, RoutedEventArgs e)
+    {
+        listView = !listView; viewMode.Content = listView ? "网格" : "列表"; RenderDevices();
+    }
+    private void DeviceTab_Click(object? sender, RoutedEventArgs e)
+    {
+        deviceTab = ReferenceEquals(sender, deviceTabFav) ? 1 : 0;
+        SetClass(deviceTabAll, "selected", deviceTab == 0); SetClass(deviceTabFav, "selected", deviceTab == 1);
+        RenderDevices();
+    }
+    private void OpenTransfer_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(HostTransferPaths.SharedDirectory);
+            var launch = new System.Diagnostics.ProcessStartInfo("xdg-open") { UseShellExecute = false };
+            launch.ArgumentList.Add(HostTransferPaths.SharedDirectory); System.Diagnostics.Process.Start(launch)?.Dispose();
+        }
+        catch { transferState.Text = "无法打开目录，请手动打开下方路径。"; }
+    }
+    private async void AddTransfer_Click(object? sender, RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this)?.StorageProvider is not { } storage) return;
+        var files = await storage.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions { Title = "选择供 UU 官方客户端取出的文件", AllowMultiple = true });
+        if (files.Count == 0) return; addTransfer.IsEnabled = false;
+        try
+        {
+            Directory.CreateDirectory(HostTransferPaths.SharedDirectory);
+            foreach (var file in files)
+            {
+                var name = Path.GetFileName(file.Name); var target = Path.Combine(HostTransferPaths.SharedDirectory, name);
+                if (File.Exists(target)) target = Path.Combine(HostTransferPaths.SharedDirectory, Path.GetFileNameWithoutExtension(name) + "-" + Guid.NewGuid().ToString("N")[..8] + Path.GetExtension(name));
+                var temporary = Path.Combine(HostTransferPaths.SharedDirectory, ".uremote-" + Guid.NewGuid().ToString("N") + ".part");
+                try
+                {
+                    await using (var source = await file.OpenReadAsync())
+                    await using (var destination = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, true))
+                        await source.CopyToAsync(destination, lifetime.Token);
+                    File.Move(temporary, target, false);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
+            transferState.Text = $"已添加 {files.Count} 个文件，可在官方客户端刷新目录后取出。";
+        }
+        catch { transferState.Text = "添加未完成，请检查文件和磁盘空间。"; }
+        finally { addTransfer.IsEnabled = true; }
+    }
+    private static void Place(ContentControl host, Control control)
+    {
+        if (ReferenceEquals(host.Content, control)) return;
+        if (control.Parent is Panel panel) panel.Children.Remove(control);
+        host.Content = control;
+    }
+
     private void ShowPage(int index)
     {
         if (pages.Length == 0) return;
-        page.Content = pages[index];
-        for (var i = 0; i < navigation.Count; i++)
-        {
-            ApplyTheme(navigation[i], Button.BackgroundProperty, i == index ? "AppAccentSurfaceBrush" : "AppSurfaceBrush");
-            ApplyTheme(navigation[i], Button.ForegroundProperty, i == index ? "AppAccentBrush" : "AppMutedBrush");
-            if (navigation[i].Content is StackPanel labels)
-                foreach (var label in labels.Children.OfType<TextBlock>()) ApplyTheme(label, TextBlock.ForegroundProperty, i == index ? "AppAccentBrush" : "AppMutedBrush");
-        }
+        Place(page, pages[index]);
+        for (var i = 0; i < navigation.Count; i++) SetClass(navigation[i], "selected", i == index);
     }
     private async Task RefreshDevicesAsync()
     {
@@ -276,7 +205,11 @@ public sealed partial class URemoteView
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch
         {
-            if (!disposed && !loggingOut && generation == accountGeneration) catalogHint.Text = devices.Count > 0 ? "刷新失败，保留上次设备列表。请检查网络后重试。" : "暂时无法获取设备，请在“账号与设置”检查登录状态，或点击刷新重试。";
+            if (!disposed && !loggingOut && generation == accountGeneration)
+            {
+                catalogHint.Text = devices.Count > 0 ? "刷新失败，保留上次设备列表。请检查网络后重试。" : "暂时无法获取设备，请在“账号与设置”检查登录状态，或点击刷新重试。";
+                ReportFailure(catalogHint.Text, "设备列表");
+            }
         }
         finally { refreshing = false; if (!disposed) { refresh.IsEnabled = true; refresh.Content = "刷新"; } }
     }
@@ -291,42 +224,110 @@ public sealed partial class URemoteView
         catalogCount.Text = devices.Count > 0 ? $"我的设备  {matches.Length}" : "我的设备";
         if (matches.Length == 0)
         {
-            deviceRows.Children.Add(Card(new StackPanel { Spacing = 10, Margin = new Thickness(0, 20), Children = {
-                Text(devices.Count == 0 ? "还没有加载设备" : "没有符合条件的设备", 18),
-                Text(devices.Count == 0 ? "登录后点击刷新，即可查看同一 UU 账号下的电脑和移动设备。" : "试试其他关键词，或将筛选切换为“全部设备”。", 13, true) } })); return;
+            deviceRows.Children.Add(new CatalogMessageCard { DataContext = new CatalogMessageModel {
+                Title = devices.Count == 0 ? "还没有加载设备" : "没有符合条件的设备",
+                Message = devices.Count == 0 ? "登录后点击刷新，即可查看同一 UU 账号下的电脑和移动设备。" : "试试其他关键词，或将筛选切换为“全部设备”。" } });
+            return;
         }
         foreach (var device in matches) deviceRows.Children.Add(BuildPreviewCard(device));
     }
-    private void OpenRemote(UuDevice device)
+
+    private DeviceCard BuildPreviewCard(UuDevice device)
+    {
+        var allowed = device.CanConnect && device.Category == "desktop";
+        var wallpaperKey = device.IsCurrent && previewCache.ContainsKey("local-wallpaper") ? "local-wallpaper" : device.WallpaperUrl;
+        previewCache.TryGetValue(wallpaperKey, out var wallpaper);
+        return new DeviceCard { DataContext = new DeviceCardModel {
+            Name = device.Name,
+            StatusText = "●  " + device.ConnectionStatusName,
+            PlatformName = device.PlatformName,
+            BadgeText = device.IsCurrent ? "本机" : device.ConnectionStatusName,
+            FavoriteLabel = favorites.Contains(device.Id) ? "取消收藏" : "收藏设备",
+            Online = device.Online,
+            HasWallpaper = wallpaper is not null,
+            Wallpaper = wallpaper,
+            WallpaperOpacity = device.Online ? 1 : .5,
+            IsMobile = device.Category == "mobile",
+            ShowBadge = device.IsCurrent || !device.Online || device.Busy,
+            CanControl = allowed,
+            CanOpenRemote = allowed || (device.Busy && !device.IsCurrent && device.Controllable && device.ControlledSupport && device.Category == "desktop"),
+            ListView = listView,
+            PreviewHeight = listView ? 120 : 190,
+            IsSelected = selectedDeviceId == device.Id,
+            ConnectTip = allowed ? "点击预览进入远程控制" : device.Busy ? "点击接管设备，将断开原连接并建立新连接" : device.ConnectionStatusName,
+            ConnectName = allowed ? "远程控制 " + device.Name : "",
+            TransferTip = allowed ? "在独立窗口中浏览、上传和下载远端文件" : "设备需在线并允许被控",
+            TerminalTip = allowed ? "打开远程终端命令窗口" : "设备需在线并允许被控",
+            TransferName = "文件传输 " + device.Name,
+            TerminalName = "终端 " + device.Name,
+            PortName = "端口映射 " + device.Name,
+            WakeName = "远程开机 " + device.Name,
+            RequestRemote = () => OpenRemote(device),
+            RequestFiles = () => OpenTool(device, false),
+            RequestTerminal = () => OpenTool(device, true),
+            RequestFavorite = () => { if (!favorites.Add(device.Id)) favorites.Remove(device.Id); SaveFavorites(); RenderDevices(); },
+            RequestDetails = () => { ShowDevice(device); RenderDevices(); }
+        } };
+    }
+    private readonly HashSet<string> pendingTakeovers = [];
+    private async void OpenRemote(UuDevice device)
     {
         if (toolWindows.ContainsKey(device.Id)) { catalogHint.Text = "请先关闭此设备的终端或文件窗口，再发起桌面连接。"; return; }
         if (remoteWindows.TryGetValue(device.Id, out var existing)) { existing.Activate(); return; }
-        if (device.IsCurrent || !device.Online || !device.Controllable || !device.ControlledSupport) return;
+        if (pendingTakeovers.Contains(device.Id)) return;
+        var forceJoin = false;
+        if (device.Busy && !device.IsCurrent && device.Online && device.Controllable && device.ControlledSupport)
+        {
+            pendingTakeovers.Add(device.Id);
+            try { forceJoin = await ConfirmTakeoverAsync(device); }
+            finally { pendingTakeovers.Remove(device.Id); }
+            if (!forceJoin || disposed || loggingOut) return;
+            if (remoteWindows.TryGetValue(device.Id, out existing)) { existing.Activate(); return; }
+            if (toolWindows.ContainsKey(device.Id)) return;
+        }
+        else if (!device.CanConnect) { catalogHint.Text = "设备当前不可连接：" + device.ConnectionStatusName; return; }
         try
         {
             var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
             if (!state.IsAuthenticated || !File.Exists(appliedEncoder)) throw new InvalidOperationException();
-            var window = new RemoteDesktopWindow(device, state, appliedEncoder);
+            var window = new RemoteDesktopWindow(device, state, appliedEncoder, feedback: appContext?.Feedback, forceJoin: forceJoin);
             remoteWindows.Add(device.Id, window);
             window.Closed += async (_, _) => { try { await window.Completion; } finally { remoteWindows.Remove(device.Id); } };
-            window.Show();
+            ShowManaged(window);
         }
-        catch { catalogHint.Text = "无法打开远控窗口，请检查登录状态与视频解码器路径。"; }
+        catch { catalogHint.Text = "无法打开远控窗口，请检查登录状态与视频解码器路径。"; ReportFailure(catalogHint.Text, "远程桌面"); }
+    }
+    private async Task<bool> ConfirmTakeoverAsync(UuDevice device)
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner) return false;
+        var dialog = new Window { Title = "接管设备", Width = 420, SizeToContent = SizeToContent.Height,
+            CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var cancel = new Button { Content = "取消", IsCancel = true };
+        var confirm = new Button { Content = "接管设备" };
+        cancel.Click += (_, _) => dialog.Close(false);
+        confirm.Click += (_, _) => dialog.Close(true);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 12 };
+        actions.Children.Add(cancel); actions.Children.Add(confirm);
+        var panel = new StackPanel { Margin = new Thickness(24), Spacing = 20 };
+        panel.Children.Add(new TextBlock { Text = "设备「" + device.Name + "」正在被控。", FontSize = 16, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new TextBlock { Text = "接管设备会断开原连接，并建立新的远程连接。是否继续？", TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(actions); dialog.Content = panel;
+        return await dialog.ShowDialog<bool>(owner);
     }
     private void OpenTool(UuDevice device, bool terminal)
     {
         if (remoteWindows.ContainsKey(device.Id)) { catalogHint.Text = "请先断开此设备的桌面，再打开终端或文件传输。"; return; }
         if (toolWindows.TryGetValue(device.Id, out var existing)) { existing.Activate(); catalogHint.Text = "请先关闭该设备已有的工具窗口，再切换连接类型。"; return; }
-        if (device.IsCurrent || !device.Online || !device.Controllable || !device.ControlledSupport) return;
+        if (!device.CanConnect) { catalogHint.Text = device.Busy ? "设备正在被控，请等待现有连接结束后刷新。" : "设备当前不可连接：" + device.ConnectionStatusName; return; }
         try
         {
             var state = DesktopHostSession.ReadIdentity(identity.Text ?? "").State;
             if (!state.IsAuthenticated) throw new InvalidOperationException();
-            var window = new RemoteToolsWindow(device, state, terminal); toolWindows.Add(device.Id, window);
+            var window = new RemoteToolsWindow(device, state, terminal, appContext?.Feedback); toolWindows.Add(device.Id, window);
             window.Closed += async (_, _) => { try { await window.Completion; } finally { toolWindows.Remove(device.Id); } };
-            window.Show();
+            ShowManaged(window);
         }
-        catch { catalogHint.Text = "无法打开工具窗口，请检查登录状态。"; }
+        catch { catalogHint.Text = "无法打开工具窗口，请检查登录状态。"; ReportFailure(catalogHint.Text, "远程工具"); }
     }
     private void SaveFavorites()
     {
@@ -338,17 +339,15 @@ public sealed partial class URemoteView
         selectedDeviceId = device.Id;
         deviceDetail.IsVisible = true;
         deviceDetail.Children.Clear();
-        var copy = new Button { Content = "复制设备编号" };
-        copy.Click += async (_, _) =>
-        {
-            try { if (TopLevel.GetTopLevel(this)?.Clipboard is { } board) { await board.SetTextAsync(device.Id); copy.Content = "已复制"; } }
-            catch { copy.Content = "复制失败"; }
-        };
-        var close = new Button { Content = "收起" }; close.Click += (_, _) => { selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false; RenderDevices(); };
-        deviceDetail.Children.Add(Card(new StackPanel { Spacing = 10, Children = {
-            Text(device.Name, 18), Text($"{device.PlatformName} · {device.StatusName}"),
-            Text("设备编号  " + device.Id, 12, true), Text("客户端版本  " + (device.Version.Length == 0 ? "未提供" : device.Version), 12, true),
-            Text(device.IsCurrent ? "这是本机。可在其他设备的 UU 官方客户端中发起桌面或终端连接。" : "可通过设备列表中的远程控制，在独立窗口中连接。", 13, true),
-            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { copy, close } } } }));
+        var detailView = new DeviceDetailView { Feedback = appContext?.Feedback, DataContext = new DeviceDetailModel {
+            Name = device.Name,
+            Summary = $"{device.PlatformName} · {device.ConnectionStatusName}",
+            Identifier = "设备编号  " + device.Id,
+            Version = "客户端版本  " + (device.Version.Length == 0 ? "未提供" : device.Version),
+            Description = device.IsCurrent ? "这是本机。可在其他设备的 UU 官方客户端中发起桌面或终端连接。" : "可通过设备列表中的远程控制，在独立窗口中连接。",
+            DeviceId = device.Id
+        } };
+        detailView.Dismissed += (_, _) => { selectedDeviceId = null; deviceDetail.Children.Clear(); deviceDetail.IsVisible = false; RenderDevices(); };
+        deviceDetail.Children.Add(detailView);
     }
 }

@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace URemote.Linux;
 
 public sealed record CapturedScreen(uint OutputGlobalName, uint Width, uint Height, uint Stride,
-    uint ShmFormat, bool YInverted, byte[] Pixels)
+    uint ShmFormat, bool YInverted, byte[] Pixels, bool Repeated = false, bool Pending = false)
 {
     public override string ToString() => $"CapturedScreen({Width}x{Height}, pixel contents omitted)";
 }

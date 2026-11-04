@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>AsterDock.UI</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AsterDock.Contracts\AsterDock.Contracts.csproj" />
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Semi.Avalonia" Version="12.1.0.1" />
+    <PackageReference Include="Irihi.Ursa" Version="2.2.0" />
+    <PackageReference Include="Irihi.Ursa.Themes.Semi" Version="2.2.0" />
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AsterDock.UI.Checks" />
+  </ItemGroup>
+</Project>

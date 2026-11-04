@@ -23,6 +23,21 @@ public static class ControllerProtocol
         Blob(4, enableClipboard ? Join(Int(1, 2), Int(2, 2), Int(3, 2)) : Int(3, 2))));
     public static byte[] Capture(ulong seq, int displayId, int quality = 3) => Envelope(seq, 9,
         Join(Int(2, 2), Int(3, (ulong)quality), Int(4, 1), Int(5, (ulong)displayId), Int(8, 1)));
+    // Desktop hosts route a mouse packet by screen_id. Keyboard JSON must stay untouched:
+    // a display index the host did not share is rejected for every action in that packet.
+    public static string RouteInput(string json, int display)
+    {
+        if (display is < 0 or > 4 || string.IsNullOrEmpty(json) || Encoding.UTF8.GetByteCount(json) > 4096) return json;
+        JsonNode? node;
+        try { node = JsonNode.Parse(json); }
+        catch (JsonException) { return json; }
+        if (node is not JsonObject obj || obj.ContainsKey("screen_id")) return json;
+        if (obj["action"] is not JsonValue action || !action.TryGetValue<string>(out var name)
+            || !name.StartsWith("mouse_", StringComparison.Ordinal)) return json;
+        obj["screen_id"] = display;
+        var routed = obj.ToJsonString();
+        return Encoding.UTF8.GetByteCount(routed) > 4096 ? json : routed;
+    }
     // Quality-only RPC. Levels match HostVideoSettings: 1 fluent, 2 HD, 3 ultra, 4 original, 5 automatic.
     // Screen and FPS stay unset so a change does not resize the stream or force 60 FPS.
     public static byte[] Quality(ulong seq, int quality)

@@ -25,6 +25,7 @@ public sealed class AsyncCommand(Func<Task> execute) : ICommand
 
 public sealed class ScreenShareModel : CardModel
 {
+    public string Key { get; init; } = "";
     public uint Id { get; init; }
     public string Label { get; init; } = "";
     private bool? _isChecked = true;
@@ -89,6 +90,7 @@ public sealed class DeviceCardModel : CardModel
     public bool IsDesktop => !IsMobile;
     public bool ShowBadge { get; init; }
     public bool CanControl { get; init; }
+    public bool CanOpenRemote { get; init; }
     public bool ListView { get; init; }
     public double PreviewHeight { get; init; }
     public bool IsSelected { get; init; }

@@ -5,6 +5,7 @@ public readonly record struct WaylandOutputMode(uint Name, int X, int Y, int Wid
 
 public static class WaylandOutputRefresh
 {
+    public static Task<IReadOnlyList<DesktopOutput>> ReadDetailsAsync(CancellationToken ct = default) => WaylandOutputDetails.ReadAsync(ct);
     // wl_output.mode refresh is in millihertz; only CURRENT (bit 0) describes the active mode.
     public static async Task<IReadOnlyDictionary<uint, int>> ReadAsync(CancellationToken ct = default)
     {

@@ -69,6 +69,19 @@ static class PreviewRecycleChecks
             "a real mode change still changes topology");
         var map = PortalStreamMap.Match(locked, refreshed);
         check(map[4] == 11 && map[8] == 15, "refresh maps each monitor by its position and size");
+        var logical = new[]
+        {
+            new PortalStreamBox(4, 0, 0, 1970, 1108),
+            new PortalStreamBox(8, 1970, 0, 2259, 1271)
+        };
+        var restored = new[]
+        {
+            new PortalStreamBox(15, 1970, 0, 2260, 1270),
+            new PortalStreamBox(11, 0, 0, 1971, 1109)
+        };
+        var rebound = PortalStreamMap.Match(logical, restored);
+        check(rebound[4] == 11 && rebound[8] == 15,
+            "a restore with a new logical size still follows position when the portal order flips");
     }
 
     private static void Aliases(Action<bool, string> check)
@@ -81,6 +94,28 @@ static class PreviewRecycleChecks
         DesktopBackend.NoteOutputAliases(new Dictionary<uint, uint> { [9] = 12, [10] = 13 });
         check(DesktopBackend.ResolveOutput(4) == 12 && DesktopBackend.ResolveOutput(8) == 13,
             "a second refresh still follows the stream id the preview started with");
+        DesktopBackend.ResetOutputAliasesForTests();
+        DesktopBackend.NoteOutputAliases(new Dictionary<uint, uint> { [4] = 9, [8] = 10 });
+        DesktopBackend.NoteOutputAliases(new Dictionary<uint, uint> { [9] = 10, [10] = 12 });
+        check(DesktopBackend.ResolveOutput(4) == 10 && DesktopBackend.ResolveOutput(8) == 12,
+            "reused PipeWire nodes do not merge two screens through an alias chain");
+        check(DesktopBackend.LogicalOutput(10) == 4 && DesktopBackend.LogicalOutput(12) == 8,
+            "display discovery and pointer geometry retain the original monitor ids");
+        var rates = DesktopBackend.PublishRefresh(
+            [new PortalStreamBox(10, 0, 0, 1920, 1080), new PortalStreamBox(12, 1920, 0, 2560, 1440)],
+            new Dictionary<uint, int> { [10] = 60000, [12] = 120000 });
+        check(rates[4] == 60000 && rates[8] == 120000,
+            "refresh rates follow stable monitor ids when native node ids are reused");
+        DesktopBackend.NoteOutputAliases(new Dictionary<uint, uint> { [10] = 8, [12] = 4 });
+        check(DesktopBackend.ResolveOutput(4) == 8 && DesktopBackend.ResolveOutput(8) == 4,
+            "reusing the original ids in opposite order does not create an alias cycle");
+        check(DesktopBackend.LogicalOutput(8) == 4 && DesktopBackend.LogicalOutput(4) == 8,
+            "inverse monitor lookup distinguishes native ids from public ids after a swap");
+        rates = DesktopBackend.PublishRefresh(
+            [new PortalStreamBox(8, 0, 0, 1920, 1080), new PortalStreamBox(4, 1920, 0, 2560, 1440)],
+            new Dictionary<uint, int> { [8] = 60000, [4] = 120000 });
+        check(rates[4] == 60000 && rates[8] == 120000,
+            "swapped native ids cannot overwrite a different monitor's refresh rate");
         DesktopBackend.ResetOutputAliasesForTests();
         check(DesktopBackend.ResolveOutput(4) == 4, "alias reset leaves later captures on the live id");
     }

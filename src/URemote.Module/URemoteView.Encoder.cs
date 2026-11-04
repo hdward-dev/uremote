@@ -10,19 +10,9 @@ namespace URemote.Module;
 public sealed partial class URemoteView
 {
     private string appliedEncoder = "";
-    private readonly TextBlock encoderHint = new() { TextWrapping = TextWrapping.Wrap };
-    private readonly Button detectEncoder = new() { Content = "自动检测" };
-    private readonly Button applyEncoder = new() { Content = "验证并应用" };
 
     private void BuildEncoderSettings()
     {
-        advancedSettings.Children.Add(new StackPanel
-        {
-            Orientation = Orientation.Horizontal, Spacing = 8,
-            Children = { detectEncoder, applyEncoder }
-        });
-        advancedSettings.Children.Add(encoderHint);
-        encoderHint.Text = "填写 FFmpeg 完整路径并验证。应用后用于新连接，当前连接不受影响。";
         detectEncoder.Click += (_, _) =>
         {
             var configured = Environment.GetEnvironmentVariable("UREMOTE_FFMPEG");
@@ -58,6 +48,7 @@ public sealed partial class URemoteView
                 {
                     UseShellExecute = false, RedirectStandardOutput = true,
                     RedirectStandardError = true, CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
                     ArgumentList = { "-version" }
                 }
             };
@@ -72,6 +63,7 @@ public sealed partial class URemoteView
                 if (process.ExitCode != 0 || !output.StartsWith("ffmpeg version ", StringComparison.OrdinalIgnoreCase))
                 {
                     encoderHint.Text = "验证失败：该文件未返回有效的 FFmpeg 版本信息。";
+                    ReportFailure(encoderHint.Text, "视频解码器");
                     return;
                 }
             }
@@ -81,8 +73,7 @@ public sealed partial class URemoteView
             }
             if (disposed) return;
             // Persist before publishing the new path to the background host.
-            File.WriteAllText(settingsFile, JsonSerializer.Serialize(
-                new Settings(identity.Text ?? "", candidate, allowAssistance, hostEnabled)));
+            SaveSettings(encoderOverride: candidate);
             Volatile.Write(ref appliedEncoder, candidate);
             encoder.Text = candidate;
             encoderHint.Text = "验证成功，路径已保存。新连接使用此路径，当前连接保持不变。";

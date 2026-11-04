@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace URemote.Linux;
 
 // Combined lock signal. KWin can report the screensaver active while logind LockedHint stays false.
@@ -163,17 +165,68 @@ internal static class SessionLock
         return null;
     }
 
-    internal static async Task<string> LoginSessionPathAsync(PortalBus bus, CancellationToken ct, int timeoutMs = 10000)
+    internal delegate Task<PortalValue> LoginCall(string iface, string method, PortalValue args, string path, CancellationToken ct);
+    [DllImport("libc")] private static extern uint geteuid();
+
+    internal static Task<string> LoginSessionPathAsync(PortalBus bus, CancellationToken ct, int timeoutMs = 10000)
+        => LoginSessionPathAsync((iface, method, args, path, token) => bus.CallAsync(iface, method, args, token,
+            path, "org.freedesktop.login1", timeoutMs), geteuid(), ct);
+
+    // systemd --user services are not members of a login session. Resolve the same
+    // user's graphical Display session instead of losing every login1 subscription.
+    internal static async Task<string> LoginSessionPathAsync(LoginCall call, uint uid, CancellationToken ct)
     {
-        using var pid = PortalValue.UInt((uint)Environment.ProcessId);
-        using var args = PortalValue.Tuple(pid);
-        using var reply = await bus.CallAsync("org.freedesktop.login1.Manager", "GetSessionByPID", args, ct,
-            "/org/freedesktop/login1", "org.freedesktop.login1", timeoutMs).ConfigureAwait(false);
-        using var pathValue = reply.Child(0);
-        var path = pathValue.Text();
-        if (!path.StartsWith("/org/freedesktop/login1/session/", StringComparison.Ordinal))
-            throw new FormatException("无效的登录会话。");
-        return path;
+        const string manager = "org.freedesktop.login1.Manager", root = "/org/freedesktop/login1";
+        try
+        {
+            using var pid = PortalValue.UInt((uint)Environment.ProcessId);
+            using var args = PortalValue.Tuple(pid);
+            using var reply = await call(manager, "GetSessionByPID", args, root, ct).ConfigureAwait(false);
+            reply.Require("(o)");
+            using var value = reply.Child(0);
+            var path = value.Text();
+            if (await OwnGraphicalAsync(path).ConfigureAwait(false)) return path;
+        }
+        catch (Exception e) when (IsBusFailure(e)) { }
+
+        using var userId = PortalValue.UInt(uid);
+        using var userArgs = PortalValue.Tuple(userId);
+        using var userReply = await call(manager, "GetUser", userArgs, root, ct).ConfigureAwait(false);
+        userReply.Require("(o)");
+        using var userValue = userReply.Child(0);
+        var userPath = userValue.Text();
+        if (!userPath.StartsWith(root + "/user/", StringComparison.Ordinal)) throw new FormatException("无效的登录用户。");
+        using var iface = PortalValue.String("org.freedesktop.login1.User");
+        using var name = PortalValue.String("Display");
+        using var get = PortalValue.Tuple(iface, name);
+        using var displayReply = await call("org.freedesktop.DBus.Properties", "Get", get, userPath, ct).ConfigureAwait(false);
+        displayReply.Require("(v)");
+        using var boxed = displayReply.Child(0);
+        using var display = boxed.Unbox();
+        display.Require("(so)");
+        using var displayPath = display.Child(1);
+        var candidate = displayPath.Text();
+        if (await OwnGraphicalAsync(candidate).ConfigureAwait(false)) return candidate;
+        throw new IOException("当前用户没有可监测的本地图形登录会话。");
+
+        async Task<bool> OwnGraphicalAsync(string path)
+        {
+            if (!path.StartsWith(root + "/session/", StringComparison.Ordinal)) return false;
+            using var sessionIface = PortalValue.String("org.freedesktop.login1.Session");
+            using var args = PortalValue.Tuple(sessionIface);
+            using var reply = await call("org.freedesktop.DBus.Properties", "GetAll", args, path, ct).ConfigureAwait(false);
+            reply.Require("(a{sv})");
+            using var properties = reply.Child(0);
+            using var user = properties.Get("User");
+            using var type = properties.Get("Type");
+            using var kind = properties.Get("Class");
+            using var remote = properties.Get("Remote");
+            if (user is null || type is null || kind is null || remote is null) return false;
+            user.Require("(uo)");
+            using var owner = user.Child(0);
+            return owner.UInt() == uid && type.Text() is ("wayland" or "x11")
+                && kind.Text() is ("user" or "user-early" or "user-light") && !remote.Boolean();
+        }
     }
 
     // logind LockedHint. On Plasma this can stay false while kscreenlocker is up; callers must not treat that as unlocked.

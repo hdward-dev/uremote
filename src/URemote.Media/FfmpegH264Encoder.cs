@@ -14,7 +14,8 @@ public sealed class FfmpegH264Encoder(string executable)
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardInput = true,
-            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden };
         // No shell. No frame files. H264 profile matches the observed official offer's constrained baseline.
         string[] args = ["-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pixel_format", shmFormat == 1 ? "bgr0" : "bgra",
             "-video_size", $"{width}x{height}", "-framerate", "2", "-i", "pipe:0", "-frames:v", "1", "-an",
@@ -23,6 +24,7 @@ public sealed class FfmpegH264Encoder(string executable)
             "-pix_fmt", "yuv420p", "-x264-params", "aud=1:repeat-headers=1:keyint=1", "-threads", "2", "-f", "h264", "pipe:1"];
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start) ?? throw new IOException("Unable to start H264 encoder.");
+        URemote.Core.HiddenConsole.Hide(process);
         using var cancel = deadline.Token.Register(() => { try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
         try
         {
