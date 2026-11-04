@@ -84,6 +84,24 @@ jobs:
           macOS 系统音频、触控和被控终端尚未支持；GNOME 桌面快捷操作仍需实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES
-          gh release create "v$PLUGIN_VERSION" artifacts/release/AsterDock-App-u-remote.appbundle artifacts/release/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "U远程 v$PLUGIN_VERSION · 星栈远程控制插件" --notes-file /tmp/release-notes.md
+          tag="v$PLUGIN_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets,isDraft,url > /tmp/existing-release.json 2>/tmp/release-query-error.log; then
+            python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          release = json.loads(Path('/tmp/existing-release.json').read_text())
+          required = {'AsterDock-App-u-remote.appbundle', 'SHA256SUMS.txt'}
+          available = {asset['name'] for asset in release['assets'] if asset['size'] > 0}
+          if release['isDraft'] or not required <= available:
+              raise SystemExit('Existing release is a draft or has missing assets; inspect it before publishing again.')
+          message = f"v{os.environ['PLUGIN_VERSION']} is already published: {release['url']}\n"
+          message += 'Existing assets were preserved. Increase src/URemote.Module/app.json version to publish a new release.\n'
+          print(message)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(message)
+          PYCODE
+          else
+            gh release create "$tag" artifacts/release/AsterDock-App-u-remote.appbundle artifacts/release/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "U远程 v$PLUGIN_VERSION · 星栈远程控制插件" --notes-file /tmp/release-notes.md
+          fi
