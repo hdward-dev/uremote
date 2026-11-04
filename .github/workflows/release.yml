@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.400'
+      - name: Install X11 integration test dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xfwm4 libx11-6 libxext6 libxrandr2 libxdamage1 libxtst6
       - name: Read plugin version
         run: |
           python3 - <<'PYCODE'

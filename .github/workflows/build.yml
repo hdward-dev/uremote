@@ -10,6 +10,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Install X11 integration test dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xfwm4 libx11-6 libxext6 libxrandr2 libxdamage1 libxtst6
       - run: dotnet restore URemote.slnx
       - run: dotnet build URemote.slnx -c Release --no-restore -m:1
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
