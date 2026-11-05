@@ -7,7 +7,8 @@ using URemote.Host;
 
 internal static class HostInput
 {
-    public static async Task RunAsync(HostMediaPeer media, IReadOnlyList<uint> outputs, CancellationToken ct, Action<string> report, bool enableInput = true, bool enableClipboard = false, HostVideoSettings? profiles = null, bool enableFiles = true, Action? inputApplied = null)
+    public static async Task RunAsync(HostMediaPeer media, IReadOnlyList<uint> outputs, CancellationToken ct, Action<string> report, bool enableInput = true, bool enableClipboard = false, HostVideoSettings? profiles = null, bool enableFiles = true, Action? inputApplied = null,
+        Func<CancellationToken, Task<PrivacyScreenImage?>>? loadScreenSaver = null)
     {
         while (media.State != RTCPeerConnectionState.connected) await Task.Delay(100, ct);
         await using var fileTransfer = enableFiles ? new HostFileTransfer(media.SendData, report, ct) : null;
@@ -15,6 +16,7 @@ internal static class HostInput
         if (keyboard is null) report("keyboard-backend=disabled");
         await using var touch = await HostTouchInput.OpenAsync(enableInput, report, ct);
         await using var clipboard = enableClipboard ? new HostClipboard(media, report) : null;
+        await using var privacy = await HostPrivacySession.OpenAsync(media, enableInput, report, ct, loadScreenSaver);
         using var clipboardStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var watch = clipboard?.WatchAsync(clipboardStop.Token) ?? Task.CompletedTask;
         var displays = new List<(uint Width, uint Height, IDesktopPointer Pointer)>();
@@ -58,13 +60,16 @@ internal static class HostInput
                     continue;
                 }
                 if (fileTransfer is not null && await fileTransfer.HandleAsync(message)) continue;
+                if (category is "control" or "text" && await privacy.HandleAsync(message.Bytes, touch?.Available == true, ct)) continue;
                 if (category == "control" && !message.IsText && HostTouchProtocol.ReplyMetrics(message.Bytes, ++sequence, touch?.Available == true) is { } metricsReply)
                 { media.SendControl(metricsReply); continue; }
                 if (category == "control" && !message.IsText && HostControlEcho.Reply(message.Bytes, ++sequence,
-                    (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), enableInput, enableClipboard, enableFiles, captureSettingVersion: profiles is null ? 0 : 4) is { } reply)
+                    (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), enableInput, enableClipboard, enableFiles, captureSettingVersion: profiles is null ? 0 : 4,
+                    privacyScreenVersion: privacy.Supported ? 1 : 0) is { } reply)
                 {
                     if (media.SendControl(reply) && observed.Add("echo")) {
                         report("control-echo-replied");
+                        privacy.SendInitial(touch?.Available == true);
                         if (profiles is not null && outputs.Count > 0) media.SendControl(profiles.Sync(++sequence));
                         if (enableFiles) media.SendControl(FileTransferProtocol.Join(FileTransferProtocol.Int(1, ++sequence),
                             FileTransferProtocol.Blob(26, FileTransferProtocol.Text(1, "/"))));
@@ -162,6 +167,7 @@ internal static class HostInput
         }
         finally
         {
+            await privacy.DisposeAsync();
             clipboardStop.Cancel();
             try { await watch; } catch (OperationCanceledException) when (clipboardStop.IsCancellationRequested) { }
             foreach (var display in displays) await display.Pointer.DisposeAsync();

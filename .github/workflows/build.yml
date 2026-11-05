@@ -20,6 +20,7 @@ jobs:
           dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-timing-checks
           dotnet run --project tests/URemote.Checks -c Release --no-build -- --host-recovery-checks
           dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-loss-checks
+          dotnet run --project tests/URemote.Checks -c Release --no-build -- --privacy-checks
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check
 

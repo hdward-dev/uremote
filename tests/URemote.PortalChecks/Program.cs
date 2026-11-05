@@ -1,8 +1,95 @@
 using System.Runtime.InteropServices;
 using URemote.Linux;
+using URemote.Core;
 
 var checks = 0;
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); checks++; Console.WriteLine("PASS: " + name); }
+if (args.Contains("--privacy-probe"))
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+    Check(await KdePrivacyScreen.IsSupportedAsync(deadline.Token), "KDE exposes capture exclusion and the required native Wayland interfaces; no screen covered");
+    return;
+}
+if (args.Contains("--privacy-crop-checks"))
+{
+    Check(KdePrivacyScreen.Crop(1920, 1080, 2560, 1440) == (0u, 0u, 491520u, 276480u), "matching image and output ratio preserves the entire screensaver");
+    Check(KdePrivacyScreen.Crop(1080, 1920, 2560, 1440) == (0u, 168000u, 276480u, 155520u), "portrait image fills a landscape output without distortion");
+    Check(KdePrivacyScreen.Crop(1920, 1080, 1080, 1920) == (168000u, 0u, 155520u, 276480u), "landscape image fills a portrait output without distortion");
+    Check(KdePrivacyScreen.Crop(1, 1, 3840, 2160) == (0u, 56u, 256u, 144u), "returning to a one-pixel black buffer keeps a valid viewport");
+    return;
+}
+if (args.Length == 2 && args[0] == "--privacy-assert-clean" && int.TryParse(args[1], out var removedPid) && removedPid > 0)
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    Check(await KwinPrivacyScript.RunAsync("return !workspace.windowList().some(function(w) { return Number(w.pid) === " + removedPid + " && w.dock; });", deadline.Token), "KWin removes every privacy cover after abrupt client process termination");
+    return;
+}
+if (args.Contains("--privacy-live"))
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+    await using (var cover = await KdePrivacyScreen.OpenForTestsAsync(64, deadline.Token))
+    {
+        Check(true, "64px test surfaces created on all outputs after capture exclusion acknowledgement");
+        await Task.Delay(1500, deadline.Token);
+    }
+    Check(true, "test surfaces closed and local visibility restored"); return;
+}
+if (args.Contains("--privacy-capture-live") || args.Contains("--privacy-full-capture-live") || args.Contains("--privacy-image-capture-live"))
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)); var ct = deadline.Token;
+    await using var desktop = await PortalDesktopSession.OpenAsync(true, ct);
+    Check(desktop.Outputs.Count >= 2, "combined Portal authorization supplies both displays for privacy verification");
+    var outputs = desktop.Outputs.Select(o => o.Name).ToArray();
+    await desktop.OpenPipesAsync(outputs, ct);
+    int CountVisible(CapturedScreen frame)
+    {
+        var visible = 0; var imageColor = 0;
+        // The cover occupies the upper-left 64 logical pixels. Sample inside it,
+        // away from the cursor, at native scale; never persist or log pixel contents.
+        for (var y = 12; y < 48; y++) for (var x = 12; x < 48; x++)
+        {
+            var i = checked((int)(y * frame.Stride + x * 4));
+            if (frame.Pixels[i] > 12 || frame.Pixels[i + 1] > 12 || frame.Pixels[i + 2] > 12) visible++;
+            if (Math.Abs(frame.Pixels[i] - 29) < 12 && Math.Abs(frame.Pixels[i + 1] - 173) < 12 && Math.Abs(frame.Pixels[i + 2] - 91) < 12) imageColor++;
+        }
+        Array.Clear(frame.Pixels);
+        if (args.Contains("--privacy-image-capture-live")) Check(imageColor < 100, "the local screensaver marker color is excluded from remote capture");
+        return visible;
+    }
+    var before = new List<int>();
+    foreach (var output in outputs) before.Add(CountVisible(await desktop.CaptureAsync(output, ct)));
+    Console.WriteLine("privacy-probe-visible-before=" + string.Join(',', before));
+    Check(before.All(n => n > 100), "capture test region contains visible content on every display");
+    await using (var cover = args.Contains("--privacy-full-capture-live") ? await KdePrivacyScreen.OpenAsync(ct: ct) : await KdePrivacyScreen.OpenForTestsAsync(64, ct))
+    {
+        if (args.Contains("--privacy-image-capture-live"))
+        {
+            var pixels = new byte[64 * 32 * 4];
+            for (var i = 0; i < pixels.Length; i += 4) { pixels[i] = 29; pixels[i + 1] = 173; pixels[i + 2] = 91; pixels[i + 3] = 255; }
+            using var image = new PrivacyScreenImage(64, 32, pixels);
+            await cover.SetImageAsync(image, ct);
+            Check(cover.IsActive, "custom image buffers applied after compositor synchronization");
+        }
+        await Task.Delay(500, ct);
+        for (var pass = 0; pass < 3; pass++)
+        {
+            foreach (var output in outputs)
+                Check(CountVisible(await desktop.CaptureAsync(output, ct)) > 100, "Portal still receives the underlying desktop while the local cover is black");
+            await Task.Delay(100, ct);
+        }
+        Check(cover.IsActive, "privacy surfaces remain active during capture");
+        if (args.Contains("--privacy-full-capture-live"))
+            Check(await KwinPrivacyScript.RunAsync("var w = workspace.windowList().filter(function(w) { return Number(w.pid) === " + Environment.ProcessId + " && w.dock; }); return w.length === " + outputs.Length + " && w.every(function(w) { var f = w.frameGeometry, o = w.output.geometry; return f.x === o.x && f.y === o.y && f.width === o.width && f.height === o.height; });", ct), "black cover geometry matches every entire physical output");
+        Check(await KwinPrivacyScript.RunAsync("return !workspace.activeWindow || Number(workspace.activeWindow.pid) !== " + Environment.ProcessId + ";", ct), "privacy overlays do not take keyboard focus");
+        if (args.Contains("--privacy-image-capture-live"))
+        {
+            await cover.SetImageAsync(null, ct);
+            Check(cover.IsActive, "image can be cleared back to black without dropping privacy");
+        }
+    }
+    Check(await KwinPrivacyScript.RunAsync("return !workspace.windowList().some(function(w) { return Number(w.pid) === " + Environment.ProcessId + " && w.dock; });", ct), "all local cover windows removed after disposal");
+    return;
+}
 if (args.Contains("--login-session-live"))
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));

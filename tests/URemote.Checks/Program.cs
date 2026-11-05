@@ -4,6 +4,17 @@ using URemote.Linux;
 using System.Diagnostics;
 using System.Text;
 
+if (args.Contains("--privacy-checks"))
+{
+    await PrivacySessionChecks.RunAsync((ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    return;
+}
+if (args.Contains("--privacy-image-decode-checks"))
+{
+    await PrivacyImageDecoderChecks.RunAsync(args.Last(), (ok, label) => { if (!ok) throw new Exception(label); Console.WriteLine("PASS: " + label); });
+    return;
+}
+
 if (args.Contains("--video-latency-checks"))
 {
     await EncoderLatencyChecks.RunAsync(args.Last(), args.Contains("--throughput"));

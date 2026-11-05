@@ -86,7 +86,8 @@ try
             Console.WriteLine(args[0] == "--host-control"
                 ? "control-ready; controllable=true; keyboard-mouse-enabled; max-duration=300s"
                 : "preview-ready; controllable=true; 720p; input-disabled; max-duration=300s");
-            await HostPreview.RunAsync(signal, args[2], outputs, deadline.Token, enableInput: args[0] == "--host-control");
+            using var screenSaver = new URemote.Host.HostScreenSaver(identity.State, () => args[2]);
+            await HostPreview.RunAsync(signal, args[2], outputs, deadline.Token, enableInput: args[0] == "--host-control", loadScreenSaver: screenSaver.LoadAsync);
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         { Console.WriteLine("预览已停止，连接已关闭。"); }

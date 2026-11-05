@@ -68,6 +68,8 @@ jobs:
       - run: dotnet run --project tests/URemote.ProtocolChecks -c Release --no-build
       - name: Check capture settings, true color and packet pacing
         run: dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-timing-checks
+      - name: Check privacy screen lifetime and image updates
+        run: dotnet run --project tests/URemote.Checks -c Release --no-build -- --privacy-checks
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --candidate-signaling-check
       - run: dotnet run --project tests/URemote.Media.Tests -c Release --no-build -- --clipboard-check
       - name: Package and validate plugin
@@ -80,7 +82,8 @@ jobs:
           U远程是星栈的远程控制插件，需要安装星栈后导入 .appbundle 使用。
           星栈下载：https://github.com/hdward-dev/asterdock/releases
 
-          本次更新同步星栈主线 4320b01：Linux NVIDIA 硬件编码、4:4:4 真彩、低延迟发包、帧率与解码尺寸协商，以及锁屏、多屏、输入和传输修复。iOS 主控连接本机 KDE/Wayland 的普通与真彩模式均已实测流畅、接近 60 FPS；实际帧率仍受显示器刷新率、设备和网络限制。真彩为 8 位 SDR，尚不支持 HDR 视频传输。
+          本次源码同步星栈主线 e03e8f7：新增 KDE Plasma / Wayland 普通防窥屏与预设／自定义屏保同步，支持双屏遮罩、图片更新和关闭或断开后恢复。需要 Portal 采集及 KWin 窗口采集排除接口，暂不支持关闭物理显示器。
+          保留 Linux NVIDIA 硬件编码、4:4:4 真彩及低延迟视频发送；真彩为 8 位 SDR，尚不支持 HDR 视频传输。
           macOS 系统音频、触控和被控终端尚未支持；GNOME 桌面快捷操作仍需实机验证。
           附带 SHA256SUMS.txt 用于校验插件包。
           NOTES

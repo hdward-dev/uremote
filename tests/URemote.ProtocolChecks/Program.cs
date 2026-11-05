@@ -21,6 +21,8 @@ void Reject(Action action, string label)
     throw new Exception("FAIL: " + label);
 }
 TouchTests.Run(Check);
+PrivacyTests.Run(Check, Reject);
+await ScreensaverApiTests.RunAsync(Check);
 Check(HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 2 }) == HostDesktopAction.ShowDesktop, "official show desktop action");
 Check(HostDesktopActions.Decode("CONTROL_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 3 }) == HostDesktopAction.ShowWindows, "official show windows action");
 Check(HostDesktopActions.Decode("TEXT_DATA_CHANNEL", false, new byte[] { 0x1a, 2, 8, 2 }) is null

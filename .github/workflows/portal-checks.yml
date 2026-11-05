@@ -16,3 +16,5 @@ jobs:
       - run: dotnet build tests/URemote.PortalChecks -c Release
       - name: Test synthetic video and isolated Portal protocol
         run: UREMOTE_ISOLATED_TEST_BUS=1 dbus-run-session -- dotnet tests/URemote.PortalChecks/bin/Release/net10.0/URemote.PortalChecks.dll
+      - name: Check privacy image viewport mapping
+        run: dotnet tests/URemote.PortalChecks/bin/Release/net10.0/URemote.PortalChecks.dll --privacy-crop-checks

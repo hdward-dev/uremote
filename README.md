@@ -38,6 +38,7 @@ U远程是 [星栈（AsterDock）](https://github.com/hdward-dev/asterdock) 的�
 - Linux / Wayland 本机被控，包含多屏、键鼠、远程终端及文件传入/取出。
 - macOS 本机被控，使用原生 ScreenCaptureKit 屏幕采集与键鼠输入，支持设备上线、壁纸预览和桌面快捷操作。
 - 本机被控与远程协助开关；本机手动关闭被控的状态会保存。
+- KDE Plasma / Wayland 普通防窥屏：本机双屏显示所选屏保，远端仍能查看和操作桌面；支持预设／自定义图片更新，关闭或断开后自动恢复。需要 Portal 采集和 KWin 的窗口采集排除接口，暂不支持关闭物理显示器，详见 [防窥屏与屏保同步](docs/uremote-privacy-screen.md)。
 - 显示器变化及部分网络、采集故障自动重试。
 - Linux NVIDIA 硬件编码与 4:4:4 真彩，支持按客户端能力切换色度和画质；需要 FFmpeg 包含 `h264_nvenc` 且驱动编码探测通过。真彩当前为 8 位 SDR，HDR 视频传输尚未实现。
 
@@ -55,6 +56,7 @@ macOS 本机被控需要在系统设置中授予星栈“屏幕录制”和“�
 | --- | --- | --- | --- |
 | NixOS 26.11（Zokor，x86_64；Linux 7.2.5） | niri 26.04 | Wayland | Windows / iOS 客户端连接本机、桌面传屏与键鼠控制、多屏画面及切屏、远程终端；本机主控通过外网连接 Windows，画面与键鼠正常 |
 | NixOS（x86_64，本机） | KDE Plasma | Wayland | 2026-11-04：主屏 3840×2160 60Hz、显示器 HDR 开启；iOS 主控普通及 4:4:4 真彩模式均流畅、接近 60 FPS。传输画面仍为 8 位 SDR |
+| NixOS（x86_64，本机） | KDE Plasma 6.7.5 | Wayland / Portal | 2026-11-05：用户以官方客户端确认双屏防窥、远端继续操作、关闭防窥及断开后本机恢复正常；另已验证屏保图片读取、解码、双屏绘制和采集排除 |
 | Ubuntu 26.04.1 LTS（Kubuntu 桌面） | KDE Plasma 6.6.6 | Wayland | 桌面环境识别、Portal 授权与连续画面采集、键鼠接口、取消采集后保持共享、关闭会话，以及主题默认壁纸预览 |
 | macOS 26.5（arm64） | macOS 桌面；Mac mini，Apple M4（Mac16,10） | 本机图形会话 | 账号登录与设备上线、原生屏幕采集与键鼠控制、刷新率读取、当前壁纸识别与预览上传；不含系统声音、触控及被控远程终端 |
 
@@ -86,7 +88,7 @@ dotnet run --project tests/URemote.Checks -c Release --no-build -- --video-timin
 | `AsterDock.UI` | 与星栈同步的共享界面依赖；由宿主提供，不重复打入插件包 |
 | `tests` | 协议、媒体及集成检查 |
 
-本仓库从星栈提交 `2f71522` 拆出，本次源码同步至星栈主线 [4320b01](https://github.com/hdward-dev/asterdock/commit/4320b011298cf431b9a1f3321b9e326495adf2d9)，可独立构建插件。插件界面依赖近期星栈宿主提供的共享 UI，请先更新星栈再导入插件。依赖完整星栈宿主的 DesktopCheck 不纳入此仓库的构建方案。
+本仓库从星栈提交 `2f71522` 拆出，本次源码同步至星栈主线 [e03e8f7](https://github.com/hdward-dev/asterdock/commit/e03e8f78107f74ca77a86b8d42a9095e085dcb82)，可独立构建插件。插件界面依赖近期星栈宿主提供的共享 UI，请先更新星栈再导入插件。依赖完整星栈宿主的 DesktopCheck 不纳入此仓库的构建方案。
 
 ## 第三方声明
 

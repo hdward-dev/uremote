@@ -9,7 +9,8 @@ using URemote.Media;
 // Foreground single-viewer experiment; input is enabled only by the explicit control CLI mode.
 public static class HostPreview
 {
-    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null, Func<string, bool>? recyclePortal = null, Action<Action<string>>? bindCaptureRefresh = null)
+    public static async Task RunAsync(UuSignalClient signal, string ffmpeg, IReadOnlyList<uint> outputs, CancellationToken ct, bool enableInput = false, Action<string>? report = null, bool enableAudio = false, bool enableClipboard = false, HostTerminalManager? terminalManager = null, Func<string,string,CancellationToken,Task>? assistance = null, Func<CancellationToken>? assistancePermission = null, Action? assistanceConnected = null, Action<HostControlConnection?>? connectionChanged = null, Func<string,CancellationToken,Task>? assistanceMode = null, Func<string>? encoderPath = null, Func<string, bool>? recyclePortal = null, Action<Action<string>>? bindCaptureRefresh = null,
+        Func<CancellationToken, Task<PrivacyScreenImage?>>? loadScreenSaver = null)
     {
         report ??= Console.WriteLine;
         if (OperatingSystem.IsMacOS() && enableAudio) { enableAudio = false; report("audio-unavailable"); }
@@ -376,7 +377,7 @@ public static class HostPreview
                                     connectionInfo = connectionInfo with { HasInputActivity = true };
                                     connectionChanged?.Invoke(connectionInfo);
                                 }
-                            });
+                            }, loadScreenSaver: loadScreenSaver);
                         audio = !dataOnly && enableAudio ? StreamAudioAsync(media, report, peerStop.Token) : Task.CompletedTask;
                         var activeMedia = media;
                         void PeerFailed(Task task)

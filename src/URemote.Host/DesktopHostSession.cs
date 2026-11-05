@@ -40,6 +40,7 @@ public static class DesktopHostSession
         using var ownedAdmission = admission is null ? new HostAdmission() : null;
         admission ??= ownedAdmission!;
         using var api = new UuMacHostApi(identity.State);
+        using var screenSaver = new HostScreenSaver(identity.State, () => encoderPath?.Invoke() ?? ffmpeg);
         api.AdmissionAllowed = () => admission.Enabled;
         using var wallpaperStop=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var wallpaper=HostWallpaper.RunAsync(identity.State,ffmpeg,identityPath,report,wallpaperStop.Token);
@@ -176,7 +177,8 @@ public static class DesktopHostSession
                     var activity = DesktopBackend.UsingPortal
                         ? DesktopBackend.WatchPortalSessionAsync(reason => Recycle(reason), report, previewStop.Token)
                         : Task.CompletedTask;
-                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, controlInput, report, controlAudio, controlClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle, BindRefresh); }
+                    try { await HostPreview.RunAsync(signal, ffmpeg, selected, previewStop.Token, controlInput, report, controlAudio, controlClipboard, terminals, api.AnswerAssistanceAsync, () => HostAssistance.PermissionToken(identity.State.DeviceId), () => { if (HostAssistance.RotateAfterConnection(identity.State.DeviceId)) report("assistance-code-rotated"); }, connectionChanged, api.AnswerAssistanceModeAsync, encoderPath, Recycle, BindRefresh,
+                        loadScreenSaver: screenSaver.LoadAsync); }
                     catch (OperationCanceledException) when (previewStop.IsCancellationRequested) { }
                     finally { previewStop.Cancel(); await Task.WhenAll(watch, activity); }
                     if (signal.Events.Completion.IsCompleted) { await signal.Events.Completion; throw new IOException("Publisher signal closed."); }

@@ -95,7 +95,9 @@ internal sealed class WaylandConnection : IDisposable
         if (size < 8 || size % 4 != 0) throw new FormatException("Invalid Wayland event size.");
         var data = new byte[size - 8];
         await ReadExactlyAsync(data, ct);
-        if (target == 1 && opcode == 0) throw new IOException("Compositor rejected a Wayland protocol request.");
+        if (target == 1 && opcode == 0) throw new IOException("Compositor rejected a Wayland protocol request (object="
+            + (data.Length >= 4 ? BinaryPrimitives.ReadUInt32LittleEndian(data) : 0) + ";code="
+            + (data.Length >= 8 ? BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4)) : 0) + ").");
         return (target, opcode, data);
     }
 

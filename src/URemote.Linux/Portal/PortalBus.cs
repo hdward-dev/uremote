@@ -3,7 +3,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace URemote.Linux;
 
-internal sealed class PortalBus : IAsyncDisposable
+internal sealed partial class PortalBus : IAsyncDisposable
 {
     internal const string InterfacePrefix = "org.freedesktop.portal";
     internal const string Destination = InterfacePrefix + ".Desktop", Desktop = "/org/freedesktop/portal/desktop";
@@ -160,6 +160,7 @@ internal sealed class PortalBus : IAsyncDisposable
     }), ct);
     public async ValueTask DisposeAsync()
     {
+        foreach (var export in exports.Values.ToArray()) await export.DisposeAsync();
         foreach (var id in callbacks.Keys.ToArray()) await UnsubscribeAsync(id);
         if (connection != 0) { NativeGlib.g_object_unref(connection); connection = 0; }
         await dispatcher.DisposeAsync();
